@@ -1,0 +1,1 @@
+vagrant init rockylinux/9
