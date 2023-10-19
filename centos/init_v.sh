@@ -1,0 +1,1 @@
+vagrant init centos/stream8

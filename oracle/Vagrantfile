@@ -1,0 +1,138 @@
+#
+#K8S_VER = ""
+K8S_VER = "1.23.10"
+K8S_VIP = "192.168.56.60"
+K8S_IF = "enp0s8"
+#
+K8S_OS_IMAGE = "generic/oracle8"
+#K8S_OS_IMAGE = "oraclelinux/8"
+#K8S_OS_IMAGE_URL = "https://oracle.github.io/vagrant-projects/boxes/oraclelinux/8.json"
+#
+#
+#
+$install_script = <<-SCRIPT
+echo "---------------------------------------------------------------------------------"
+echo " 1: " $1
+echo " 2: " $2
+echo " 3: " $3
+echo " 4: " $4
+echo "---------------------------------------------------------------------------------"
+echo "script_all_1"
+echo "---------------------------------------------------------------------------------"
+runuser -l vagrant -c 'echo "sudo -i" >> $HOME/.bashrc'
+sed -i "/$HOSTNAME/d" /etc/hosts
+echo '192.168.56.60  k8svip' >> /etc/hosts
+echo '192.168.56.61  cp1' >> /etc/hosts
+echo '192.168.56.62  cp2' >> /etc/hosts
+echo '192.168.56.63  cp3' >> /etc/hosts
+echo '192.168.56.71  worker1' >> /etc/hosts
+echo '192.168.56.72  worker2' >> /etc/hosts
+echo '192.168.56.73  worker3' >> /etc/hosts
+echo '192.168.56.80  student' >> /etc/hosts
+sed -e '/swap/ s/^#*/#/' -i /etc/fstab 
+# sudo sed -i '/\bswap\b/s/^/#/' /etc/fstab
+swapoff -a
+modprobe overlay
+modprobe br_netfilter
+echo overlay > /etc/modules-load.d/k8s.conf
+echo br_netfilter >> /etc/modules-load.d/k8s.conf
+echo 'net.bridge.bridge-nf-call-ip6tables = 1' >> /etc/sysctl.d/k8s.conf
+echo 'net.bridge.bridge-nf-call-iptables = 1' >> /etc/sysctl.d/k8s.conf
+echo 'net.ipv4.ip_forward = 1' >> /etc/sysctl.d/k8s.conf
+sysctl --system
+#sysctl -p /etc/sysctl.d/k8s.conf
+dnf update -y
+dnf install yum-utils vim tc -y
+yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+dnf install containerd.io -y
+sed -e '/cri/ s/^#*/#/' -i /etc/containerd/config.toml 
+systemctl restart containerd.service 
+cat <<EOF | sudo tee /etc/yum.repos.d/kubernetes.repo
+[kubernetes]
+name=Kubernetes
+baseurl=https://packages.cloud.google.com/yum/repos/kubernetes-el7-x86_64
+enabled=1
+gpgcheck=1
+gpgkey=https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg
+exclude=kubelet kubeadm kubectl
+EOF
+# Set SELinux in permissive mode (effectively disabling it)
+sudo setenforce 0
+sudo sed -i 's/^SELINUX=enforcing$/SELINUX=permissive/' /etc/selinux/config
+systemctl disable --now firewalld.service
+# Install Kubernetes
+sudo yum install -y kubelet kubeadm kubectl --disableexcludes=kubernetes
+sudo systemctl enable --now kubelet
+export KUBECONFIG=/etc/kubernetes/admin.conf
+#
+if [ $1 = "cp1" ]; then 
+  echo "---------------------------------------------------------------------------------"
+  echo " 1: " $1
+  echo " 2: " $2
+  echo " 3: " $3
+  echo " 4: " $4
+  echo "---------------------------------------------------------------------------------"
+  echo "cp1_script"
+  echo "---------------------------------------------------------------------------------"
+  kubeadm init --apiserver-advertise-address=192.168.56.61 --pod-network-cidr=10.244.0.0/16
+  sudo cp /etc/kubernetes/admin.conf /vagrant
+  kubeadm token create --print-join-command > /vagrant/kubeadm_join_worker.sh
+  kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.24.5/manifests/calico.yaml
+elif [ $1 = "cp2" -o $1 = "cp3" ]; then 
+  echo "secondary control plane"
+  cp /vagrant/admin.conf /etc/kubernetes
+elif [[ $1 == "worker"* ]]; then
+  echo "---------------------------------------------------------------------------------"
+  echo "script_worker"
+  echo "---------------------------------------------------------------------------------"
+  cp /vagrant/admin.conf /etc/kubernetes
+  #ip r add 10.96.0.0/12 via 192.168.56.61 dev eth1
+  #nmcli connection modify System\ eth1 ipv4.routes "10.96.0.0/12 192.168.56.61"
+  sh /vagrant/kubeadm_join_worker.sh
+fi
+echo "export KUBECONFIG=/etc/kubernetes/admin.conf" >> /root/.bashrc
+echo "source <(kubectl completion bash)" >> $HOME/.bashrc
+echo "source <(kubeadm completion bash)" >> $HOME/.bashrc
+echo "alias k=kubectl" >> $HOME/.bashrc
+echo "complete -F __start_kubectl k" >> $HOME/.bashrc
+SCRIPT
+#
+#
+#
+Vagrant.configure("2") do |config|
+  (1..1).each do |i|
+    config.vm.define "cp#{i}" do |node|
+      node.vm.box = "#{K8S_OS_IMAGE}"
+      #node.vm.box_url = "#{K8S_OS_IMAGE_URL}"
+      node.vm.network "private_network", ip: "192.168.56.6#{i}"
+      node.vm.hostname = "cp#{i}"
+      node.vm.synced_folder ".", "/vagrant"
+      node.vm.provider "virtualbox" do |vb|
+        vb.memory = 2048
+      end
+      node.vm.provision "shell", args: ["cp#{i}","#{K8S_VER}","#{K8S_VIP}","#{K8S_IF}"],  inline: $install_script
+    end
+  end
+
+  (1..3).each do |i|
+    config.vm.define "worker#{i}" do |node|
+      node.vm.box = "#{K8S_OS_IMAGE}"
+      #node.vm.box_url = "#{K8S_OS_IMAGE_URL}"
+      node.vm.network "private_network", ip: "192.168.56.7#{i}"
+      node.vm.hostname = "worker#{i}"
+      node.vm.synced_folder ".", "/vagrant"
+      config.vm.provider "virtualbox" do |vb|
+        vb.memory = 2048
+      end
+      node.vm.provision "shell", args: ["worker#{i}","#{K8S_VER}","#{K8S_VIP}","#{K8S_IF}"],  inline: $install_script
+    end
+  end
+
+#  config.vm.define "student" do |student|
+#    student.vm.box = "#{K8S_OS_IMAGE}"
+#    student.vm.network "private_network", ip: "192.168.56.80"
+#    student.vm.hostname = "student"
+#    student.vm.provision "shell", args: ["student","#{K8S_VER}","#{K8S_VIP}","#{K8S_IF}"],  inline: $install_script
+#  end
+end
+

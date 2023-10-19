@@ -1,0 +1,1 @@
+vagrant init Microsoft/EdgeOnWindows10

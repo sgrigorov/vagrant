@@ -1,0 +1,1 @@
+vagrant init almalinux/9

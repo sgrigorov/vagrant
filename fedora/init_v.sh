@@ -1,0 +1,1 @@
+vagrant init fedora/36-cloud-base
