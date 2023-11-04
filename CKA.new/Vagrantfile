@@ -6,7 +6,7 @@ UBU_VER = "ubuntu/jammy64"
 #
 Vagrant.configure("2") do |config|
   config.vm.define "cp" do |cp|
-    cp.vm.box = {UBU_VER}
+    cp.vm.box = UBU_VER
     cp.vm.network "private_network", ip: "192.168.56.21"
     cp.vm.hostname = "cp"
     cp.vm.provider "virtualbox" do |vb|
@@ -86,7 +86,7 @@ Vagrant.configure("2") do |config|
   end
 
   config.vm.define "worker" do |worker|
-    worker.vm.box = {UBU_VER}
+    worker.vm.box = UBU_VER
     worker.vm.network "private_network", ip: "192.168.56.22"
     worker.vm.hostname = "worker"
     worker.vm.provider "virtualbox" do |vb|
@@ -145,7 +145,7 @@ Vagrant.configure("2") do |config|
   end
 
   config.vm.define "student" do |student|
-    student.vm.box = {UBU_VER}
+    student.vm.box = UBU_VER
     student.vm.network "private_network", ip: "192.168.56.23"
     student.vm.hostname = "student"
     student.vm.provision "shell", args: "#{K8S_VER}", inline: <<-SHELLSTUDENT
