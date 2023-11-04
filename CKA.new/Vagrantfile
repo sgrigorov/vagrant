@@ -2,7 +2,7 @@
 #K8S_VER = ""
 K8S_VER = "=1.26.1-00"
 #UBU_VER = "ubuntu/focal64"
-UBU_VER = ubuntu/jammy64"
+UBU_VER = "ubuntu/jammy64"
 #
 Vagrant.configure("2") do |config|
   config.vm.define "cp" do |cp|
