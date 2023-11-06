@@ -1,6 +1,6 @@
 #
-#K8S_VER = ""
-K8S_VER = "=1.26.1-00"
+K8S_VER = ""
+#K8S_VER = "=1.26.1-00"
 #UBU_VER = "ubuntu/focal64"
 UBU_VER = "ubuntu/jammy64"
 #
