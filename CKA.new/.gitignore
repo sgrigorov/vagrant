@@ -1,5 +1,4 @@
 admin.conf
 kubeadm_join.sh
-setup_vagrant.sh
 vagrant_id_rsa
 vagrant_id_rsa.pub
