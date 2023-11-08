@@ -28,7 +28,6 @@ Vagrant.configure("2") do |config|
       apt-get update && apt-get upgrade -y
       echo ">------------------------------ Install apps ------------------------------<"
       apt-get install -y vim
-      echo ">------------------------------ swapoff ------------------------------<"
       apt-get install curl apt-transport-https vim git wget gnupg2 software-properties-common apt-transport-https ca-certificates uidmap -y
       echo ">------------------------------ swapoff ------------------------------<"
       swapoff -a
