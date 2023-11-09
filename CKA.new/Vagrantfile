@@ -60,9 +60,11 @@ Vagrant.configure("2") do |config|
       echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.28/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
       #curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add -
       #curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor | tee /etc/apt/trusted.gpg.d/K8s_repo.asc
+      #echo "1.28.1" | cut -d"." -f 1,2
       curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.28/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
       apt-get update
       echo ">------------------------------ Install K8s ------------------------------<"
+      #apt-cache madison kubectl | grep 1.28.1 | cut -d"|" -f2 | cut -d" " -f2
       apt-get install -y kubeadm=$1-00 kubelet=$1-00 kubectl=$1-00 etcd-client
       apt-mark hold kubelet kubeadm kubectl
       sed -i '/cp/d' /etc/hosts
