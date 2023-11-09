@@ -4,6 +4,26 @@ K8S_VER = "1.28.1"
 #UBU_VER = "ubuntu/focal64"
 UBU_VER = "ubuntu/jammy64"
 #
+#
+$os_script = <<-SCRIPT_OS
+echo ">------------------------------ Generate rsa keys ------------------------------<"
+if [ ! -f "/vagrant/vagrant_id_rsa.pub"  ] ||  [ ! -f "/vagrant/vagrant_id_rsa" ]
+then
+  ssh-keygen -f $HOME/.ssh/id_rsa -P ""
+  cp $HOME/.ssh/id_rsa /vagrant/vagrant_id_rsa
+  cp $HOME/.ssh/id_rsa.pub /vagrant/vagrant_id_rsa.pub
+else
+  cp /vagrant/vagrant_id_rsa $HOME/.ssh/id_rsa
+  cp /vagrant/vagrant_id_rsa.pub $HOME/.ssh/id_rsa.pub
+fi
+cp $HOME/.ssh/id_rsa.pub $HOME/.ssh/authorized_keys
+echo ">------------------------------ OS update ------------------------------<"
+export DEBIAN_FRONTEND=noninteractive
+apt-get update && apt-get upgrade -y
+
+SCRIPT_OS
+#
+
 Vagrant.configure("2") do |config|
   config.vm.define "cp" do |cp|
     cp.vm.box = UBU_VER
@@ -14,7 +34,7 @@ Vagrant.configure("2") do |config|
     end
     cp.vm.provision "shell", args: "#{K8S_VER}", inline: <<-SHELLCP
       echo ">------------------------------ Generate rsa keys ------------------------------<"
-      if [ ! -f "$HOME/.ssh/id_rsa.pub"  ] ||  [ ! -f "$HOME/.ssh/id_rsa" ]
+      if [ ! -f "/vagrant/vagrant_id_rsa.pub"  ] ||  [ ! -f "/vagrant/vagrant_id_rsa" ]
       then
         ssh-keygen -f $HOME/.ssh/id_rsa -P ""
         cp $HOME/.ssh/id_rsa /vagrant/vagrant_id_rsa
