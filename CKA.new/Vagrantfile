@@ -21,6 +21,11 @@ echo ">------------------------------ OS update ------------------------------<"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update && apt-get upgrade -y
 
+sed -i '/cp/d' /etc/hosts
+echo '192.168.56.21  k8scp  cp' >> /etc/hosts
+echo '192.168.56.22  worker' >> /etc/hosts
+echo '192.168.56.23  student' >> /etc/hosts
+
 SCRIPT_OS
 #
 
