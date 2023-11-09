@@ -25,6 +25,7 @@ Vagrant.configure("2") do |config|
       fi
       cp $HOME/.ssh/id_rsa.pub $HOME/.ssh/authorized_keys
       echo ">------------------------------ OS update ------------------------------<"
+      export DEBIAN_FRONTEND=noninteractive
       apt-get update && apt-get upgrade -y
       echo ">------------------------------ Install apps ------------------------------<"
       apt-get install -y vim
@@ -90,7 +91,7 @@ Vagrant.configure("2") do |config|
       #kubectl apply -f https://raw.githubusercontent.com/open-policy-agent/gatekeeper/master/deploy/gatekeeper.yaml
       #echo "openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt | openssl rsa -pubin -outform der 2>/dev/null | openssl dgst -sha256 -hex | sed 's/ˆ.* //'" > /home/student/kube_get_ca.sh
       # Install Falco
-      curl -s https://falco.org/repo/falcosecurity-packages.asc | apt-key add -
+      curl -s https://falco.org/repo/falcosecurity-packages.asc | sudo gpg --dearmor -o /etc/apt/keyrings/falco.gpg
       echo "deb https://download.falco.org/packages/deb stable main" | tee -a /etc/apt/sources.list.d/falcosecurity.list
       apt-get update -y
       apt install -y dkms make linux-headers-$(uname -r)
