@@ -178,11 +178,7 @@ Vagrant.configure("2") do |config|
     cp.vm.provider "virtualbox" do |vb|
       vb.memory = 4096
     end
-    cp.vm.provision "shell", args: "#{K8S_VER}", inline: <<-SHELLCP
-
-
-
-    SHELLCP
+    cp.vm.provision "shell", args: ["#{K8S_IP}"],  inline: $os_init_script
   end
 
   config.vm.define "worker" do |worker|
