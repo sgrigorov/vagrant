@@ -36,9 +36,9 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update && apt-get upgrade -y
 
 sed -i '/cp/d' /etc/hosts
-echo '$1  k8scp  cp' >> /etc/hosts
-echo '$2  worker' >> /etc/hosts
-echo '$3  student' >> /etc/hosts
+echo $1  k8scp  cp >> /etc/hosts
+echo $2  worker >> /etc/hosts
+echo $3  student >> /etc/hosts
 
 runuser -l vagrant -c 'echo "sudo -i"  >> $HOME/.bashrc'
 
@@ -51,6 +51,7 @@ echo "complete -F __start_kubectl k" >> $HOME/.bashrc
 SCRIPT_Init_OS
 #
 $k8s_install_script = <<-SCRIPT_Install_K8S
+export DEBIAN_FRONTEND=noninteractive
 echo ">------------------------------ Install apps ------------------------------<"
 apt-get install -y vim
 apt-get install curl apt-transport-https vim git wget gnupg2 software-properties-common apt-transport-https ca-certificates uidmap -y
@@ -80,14 +81,9 @@ echo "timeout: 10" >> /etc/crictl.yaml
 echo "debug: false" >> /etc/crictl.yaml
 systemctl restart containerd.service 
 echo ">------------------------------ K8s repo"
-#echo 'deb http://apt.kubernetes.io/ kubernetes-xenial main' > /etc/apt/sources.list.d/kubernetes.list
-echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.28/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
-#curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add -
-#curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor | tee /etc/apt/trusted.gpg.d/K8s_repo.asc
-#echo "1.28.1" | cut -d"." -f 1,2
-#curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
 k8s_maj_ver=$(echo $1 | cut -d"." -f1,2 )
-curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.28/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+curl -fsSL https://pkgs.k8s.io/core:/stable:/v$k8s_maj_ver/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+echo deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v$k8s_maj_ver/deb/ / | sudo tee /etc/apt/sources.list.d/kubernetes.list
 apt-get update
 echo ">------------------------------ Install K8s ------------------------------<"
 #apt-cache madison kubectl | grep 1.28.1 | cut -d"|" -f2 | cut -d" " -f2
@@ -99,8 +95,10 @@ SCRIPT_Install_K8S
 $k8s_cluster_init_script = <<-SCRIPT_Init_K8S
 echo ">------------------------------ K8s init ------------------------------<"
 kubeadm init --apiserver-advertise-address=$1 --pod-network-cidr=10.244.0.0/16 | tee /root/kubeadm-init.out
+echo ">------------------------------ K8s token ------------------------------<"
 kubeadm token create --print-join-command > /vagrant/kubeadm_join.sh
 sudo cp /etc/kubernetes/admin.conf /vagrant/
+echo ">------------------------------ K8s apply ------------------------------<"
 #kubectl apply -f https://docs.projectcalico.org/manifests/calico.yaml --kubeconfig=/etc/kubernetes/admin.conf
 kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.26.3/manifests/calico.yaml --kubeconfig=/etc/kubernetes/admin.conf
 #kubectl apply -f https://github.com/weaveworks/weave/releases/download/v2.8.1/weave-daemonset-k8s.yaml --kubeconfig=/etc/kubernetes/admin.conf
