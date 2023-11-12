@@ -1,6 +1,6 @@
 #
 #K8S_VER = ""
-K8S_VER = "1.28.0"
+K8S_VER = "1.26.0"
 K8S_CP_IP = "192.168.56.24"
 #UBU_VER = "ubuntu/focal64"
 UBU_VER = "ubuntu/jammy64"
@@ -94,6 +94,7 @@ SCRIPT_Install_K8S
 
 $k8s_cluster_init_script = <<-SCRIPT_Init_K8S
 echo ">------------------------------ K8s init ------------------------------<"
+echo kubeadm init --apiserver-advertise-address=$1 --pod-network-cidr=10.244.0.0/16
 kubeadm init --apiserver-advertise-address=$1 --pod-network-cidr=10.244.0.0/16 | tee /root/kubeadm-init.out
 echo ">------------------------------ K8s token ------------------------------<"
 kubeadm token create --print-join-command > /vagrant/kubeadm_join.sh
