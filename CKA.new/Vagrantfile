@@ -1,6 +1,6 @@
 #
 #K8S_VER = ""
-K8S_VER = "1.28.1"
+K8S_VER = "1.28.0"
 K8S_CP_IP = "192.168.56.24"
 #UBU_VER = "ubuntu/focal64"
 UBU_VER = "ubuntu/jammy64"
@@ -48,7 +48,6 @@ echo "source <(kubectl completion bash)" >> $HOME/.bashrc
 echo "alias k=kubectl" >> $HOME/.bashrc
 echo "complete -F __start_kubectl k" >> $HOME/.bashrc
 
-
 SCRIPT_Init_OS
 #
 $k8s_install_script = <<-SCRIPT_Install_K8S
@@ -87,17 +86,19 @@ echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.
 #curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor | tee /etc/apt/trusted.gpg.d/K8s_repo.asc
 #echo "1.28.1" | cut -d"." -f 1,2
 #curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+k8s_maj_ver=$(echo $1 | cut -d"." -f1,2 )
 curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.28/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
 apt-get update
 echo ">------------------------------ Install K8s ------------------------------<"
 #apt-cache madison kubectl | grep 1.28.1 | cut -d"|" -f2 | cut -d" " -f2
-apt-get install -y kubeadm=$1-00 kubelet=$1-00 kubectl=$1-00 etcd-client
+k8s_bin_ver=$(apt-cache madison kubectl | grep $1 | head -n 1 | cut -d"|" -f2 | cut -d" " -f2)
+apt-get install -y kubeadm=$k8s_bin_ver kubelet=$k8s_bin_ver kubectl=$k8s_bin_ver etcd-client
 apt-mark hold kubelet kubeadm kubectl
 SCRIPT_Install_K8S
 
 $k8s_cluster_init_script = <<-SCRIPT_Init_K8S
 echo ">------------------------------ K8s init ------------------------------<"
-kubeadm init --apiserver-advertise-address=192.168.56.21 --pod-network-cidr=10.244.0.0/16 | tee /root/kubeadm-init.out
+kubeadm init --apiserver-advertise-address=$1 --pod-network-cidr=10.244.0.0/16 | tee /root/kubeadm-init.out
 kubeadm token create --print-join-command > /vagrant/kubeadm_join.sh
 sudo cp /etc/kubernetes/admin.conf /vagrant/
 #kubectl apply -f https://docs.projectcalico.org/manifests/calico.yaml --kubeconfig=/etc/kubernetes/admin.conf
@@ -183,7 +184,9 @@ Vagrant.configure("2") do |config|
       vb.memory = 4096
     end
     #cp.vm.provision "shell", args: [K8S_IP, K8S_IP1, K8S_IP2, K8S_IP3],  inline: $os_init_script
-    cp.vm.provision "shell", args: K8S_IPs,  inline: $os_init_script
+    cp.vm.provision "shell", args: K8S_IPs, inline: $os_init_script
+    cp.vm.provision "shell", args: K8S_VER, inline: $k8s_install_script
+    cp.vm.provision "shell", args: K8S_CP_IP, inline: $k8s_cluster_init_script
   end
 
   config.vm.define "worker" do |worker|
