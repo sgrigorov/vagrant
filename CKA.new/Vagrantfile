@@ -43,7 +43,7 @@ echo '$3  student' >> /etc/hosts
 runuser -l vagrant -c 'echo "sudo -i"  >> $HOME/.bashrc'
 
 apt-get install bash-completion -y
-source <(kubectl completion bash)
+#source <(kubectl completion bash)
 echo "source <(kubectl completion bash)" >> $HOME/.bashrc
 echo "alias k=kubectl" >> $HOME/.bashrc
 echo "complete -F __start_kubectl k" >> $HOME/.bashrc
