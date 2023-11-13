@@ -2,8 +2,8 @@
 K8S_VER = ""
 #K8S_VER = "=1.26.1-00"
 K8S_CP_IP = "192.168.56.21"
-UBU_VER = "ubuntu/focal64"
-#UBU_VER = "ubuntu/jammy64"
+UBU_VER = "ubuntu/focal64" # 20.04
+#UBU_VER = "ubuntu/jammy64" # 22.04
 #
 #
 # Calculated Variables
@@ -51,6 +51,7 @@ SCRIPT_Init_OS
 
 #
 $k8s_install_script = <<-SCRIPT_Install_K8S
+echo "------ $1"
 export DEBIAN_FRONTEND=noninteractive
 echo ">------------------------------ Install apps ------------------------------<"
 apt-get install curl apt-transport-https vim git wget gnupg2 software-properties-common apt-transport-https ca-certificates uidmap -y
@@ -83,13 +84,23 @@ sed -i 's/3.6/3.9/' /etc/containerd/config.toml
 systemctl restart containerd.service 
 echo ">------------------------------ K8s repo"
 k8s_maj_ver=$(echo $1 | cut -d"." -f1,2 )
+echo "k8s_maj_ver: $k8s_maj_ver"
 curl -fsSL https://pkgs.k8s.io/core:/stable:/v$k8s_maj_ver/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
 echo deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v$k8s_maj_ver/deb/ / | tee /etc/apt/sources.list.d/kubernetes.list
+#echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/k8s.gpg] http://apt.kubernetes.io/ kubernetes-xenial main" > /etc/apt/sources.list.d/kubernetes.list
+#curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /etc/apt/keyrings/k8s.gpg
+#apt-get update
 apt-get update
+
 echo ">------------------------------ Install K8s ------------------------------<"
 k8s_bin_ver=$(apt-cache madison kubectl | grep $1 | head -n 1 | cut -d"|" -f2 | cut -d" " -f2)
+echo "k8s_bin_ver: $k8s_bin_ver"
 apt-get install -y kubeadm=$k8s_bin_ver kubelet=$k8s_bin_ver kubectl=$k8s_bin_ver etcd-client
 apt-mark hold kubelet kubeadm kubectl
+
+#apt-get install -y kubeadm$1 kubelet$1 kubectl$1 etcd-client
+#apt-mark hold kubelet kubeadm kubectl
+
 SCRIPT_Install_K8S
 
 Vagrant.configure("2") do |config|
@@ -103,11 +114,7 @@ Vagrant.configure("2") do |config|
     cp.vm.provision "shell", args: K8S_IPs, inline: $os_init_script
     cp.vm.provision "shell", args: K8S_VER, inline: $k8s_install_script
     cp.vm.provision "shell", args: "#{K8S_VER}", inline: <<-SHELLCP
-      #echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/k8s.gpg] http://apt.kubernetes.io/ kubernetes-xenial main" > /etc/apt/sources.list.d/kubernetes.list
-      #curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /etc/apt/keyrings/k8s.gpg
-      #apt-get update
-      #apt-get install -y kubeadm$1 kubelet$1 kubectl$1 etcd-client
-      #apt-mark hold kubelet kubeadm kubectl
+
       kubeadm init --apiserver-advertise-address=192.168.56.21 --pod-network-cidr=10.244.0.0/16 | tee /root/kubeadm-init.out
       kubeadm token create --print-join-command > /vagrant/kubeadm_join.sh
       mkdir -p $HOME/.kube
