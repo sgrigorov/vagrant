@@ -1,82 +1,133 @@
 #
-#K8S_VER = ""
-K8S_VER = "=1.26.1-00"
+K8S_VER = ""
+#K8S_VER = "=1.26.1-00"
+K8S_CP_IP = "192.168.56.21"
+UBU_VER = "ubuntu/focal64"
+#UBU_VER = "ubuntu/jammy64"
 #
+#
+# Calculated Variables
+K8S_IP_A = K8S_CP_IP.chop
+K8S_IP_B = K8S_CP_IP.slice(-1)
+K8S_IP1 = K8S_IP_A + K8S_IP_B
+K8S_IP2 = K8S_IP_A + K8S_IP_B.succ
+K8S_IP3 = K8S_IP_A + K8S_IP_B.succ.succ
+
+K8S_IPs = Array[K8S_IP1, K8S_IP2, K8S_IP3]
+
+$os_init_script = <<-SCRIPT_Init_OS
+echo ">------------------------------ Generate rsa keys ------------------------------<"
+if [ ! -f "/vagrant/vagrant_id_rsa.pub"  ] ||  [ ! -f "/vagrant/vagrant_id_rsa" ]
+then
+  ssh-keygen -f $HOME/.ssh/id_rsa -P ""
+  cp $HOME/.ssh/id_rsa /vagrant/vagrant_id_rsa
+  cp $HOME/.ssh/id_rsa.pub /vagrant/vagrant_id_rsa.pub
+else
+  cp /vagrant/vagrant_id_rsa $HOME/.ssh/id_rsa
+  cp /vagrant/vagrant_id_rsa.pub $HOME/.ssh/id_rsa.pub
+fi
+cp $HOME/.ssh/id_rsa.pub $HOME/.ssh/authorized_keys
+
+echo ">------------------------------ OS update ------------------------------<"
+export DEBIAN_FRONTEND=noninteractive
+apt-get update && apt-get upgrade -y
+
+echo ">------------------------------ setup /etc/hosts ------------------------------<"
+sed -i '/cp/d' /etc/hosts
+echo $1  k8scp  cp >> /etc/hosts
+echo $2  worker >> /etc/hosts
+echo $3  student >> /etc/hosts
+
+echo ">------------------------------ setup .bashrc ------------------------------<"
+runuser -l vagrant -c 'echo "sudo -i"  >> $HOME/.bashrc'
+
+apt-get install bash-completion -y
+#source <(kubectl completion bash)
+echo "source <(kubectl completion bash)" >> $HOME/.bashrc
+echo "alias k=kubectl" >> $HOME/.bashrc
+echo "complete -F __start_kubectl k" >> $HOME/.bashrc
+
+SCRIPT_Init_OS
+
+#
+$k8s_install_script = <<-SCRIPT_Install_K8S
+export DEBIAN_FRONTEND=noninteractive
+echo ">------------------------------ Install apps ------------------------------<"
+apt-get install curl apt-transport-https vim git wget gnupg2 software-properties-common apt-transport-https ca-certificates uidmap -y
+echo ">------------------------------ swapoff ------------------------------<"
+swapoff -a
+echo ">------------------------------ modprobe ------------------------------<"
+modprobe overlay
+modprobe br_netfilter
+echo ">------------------------------ sysctl set ------------------------------<"
+echo 'net.bridge.bridge-nf-call-ip6tables = 1' >> /etc/sysctl.d/kubernetes.conf
+echo 'net.bridge.bridge-nf-call-iptables = 1' >> /etc/sysctl.d/kubernetes.conf
+echo 'net.ipv4.ip_forward = 1' >> /etc/sysctl.d/kubernetes.conf
+echo ">------------------------------ sysctl reload ------------------------------<"
+sysctl --system
+echo ">------------------------------ keyrings ------------------------------<"
+mkdir -m 0755 -p /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+$(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+echo ">------------------------------ Install contaierd ------------------------------<"
+apt-get update && apt-get install containerd.io -y
+#systemctl restart packagekit.service ssh.service
+#sed -e '/cri/ s/^#*/#/' -i /etc/containerd/config.toml 
+containerd config default > /etc/containerd/config.toml
+echo "runtime-endpoint: unix:///run/containerd/containerd.sock" > /etc/crictl.yaml
+echo "image-endpoint: unix:///run/containerd/containerd.sock" >> /etc/crictl.yaml
+echo "timeout: 10" >> /etc/crictl.yaml
+echo "debug: false" >> /etc/crictl.yaml
+sed -i 's/3.6/3.9/' /etc/containerd/config.toml
+systemctl restart containerd.service 
+echo ">------------------------------ K8s repo"
+k8s_maj_ver=$(echo $1 | cut -d"." -f1,2 )
+curl -fsSL https://pkgs.k8s.io/core:/stable:/v$k8s_maj_ver/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+echo deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v$k8s_maj_ver/deb/ / | tee /etc/apt/sources.list.d/kubernetes.list
+apt-get update
+echo ">------------------------------ Install K8s ------------------------------<"
+k8s_bin_ver=$(apt-cache madison kubectl | grep $1 | head -n 1 | cut -d"|" -f2 | cut -d" " -f2)
+apt-get install -y kubeadm=$k8s_bin_ver kubelet=$k8s_bin_ver kubectl=$k8s_bin_ver etcd-client
+apt-mark hold kubelet kubeadm kubectl
+SCRIPT_Install_K8S
+
 Vagrant.configure("2") do |config|
   config.vm.define "cp" do |cp|
-    cp.vm.box = "ubuntu/focal64"
-    cp.vm.network "private_network", ip: "192.168.56.21"
+    cp.vm.box = UBU_VER
+    cp.vm.network "private_network", ip: K8S_IP1
     cp.vm.hostname = "cp"
     cp.vm.provider "virtualbox" do |vb|
       vb.memory = 4096
     end
+    cp.vm.provision "shell", args: K8S_IPs, inline: $os_init_script
+    cp.vm.provision "shell", args: K8S_VER, inline: $k8s_install_script
     cp.vm.provision "shell", args: "#{K8S_VER}", inline: <<-SHELLCP
-      if [ ! -f "$HOME/.ssh/id_rsa.pub"  ] ||  [ ! -f "$HOME/.ssh/id_rsa" ]
-      then
-        ssh-keygen -f $HOME/.ssh/id_rsa -P ""
-        cp $HOME/.ssh/id_rsa /vagrant/vagrant_id_rsa
-        cp $HOME/.ssh/id_rsa.pub /vagrant/vagrant_id_rsa.pub
-      else
-        cp /vagrant/vagrant_id_rsa $HOME/.ssh/id_rsa
-        cp /vagrant/vagrant_id_rsa.pub $HOME/.ssh/id_rsa.pub
-      fi
-      cp $HOME/.ssh/id_rsa.pub $HOME/.ssh/authorized_keys
-      apt-get update && apt-get upgrade -y
-      apt-get install -y vim
-      apt-get install curl apt-transport-https vim git wget gnupg2 software-properties-common apt-transport-https ca-certificates uidmap -y
-      swapoff -a
-      modprobe overlay
-      modprobe br_netfilter
-      echo 'net.bridge.bridge-nf-call-ip6tables = 1' >> /etc/sysctl.d/kubernetes.conf
-      echo 'net.bridge.bridge-nf-call-iptables = 1' >> /etc/sysctl.d/kubernetes.conf
-      echo 'net.ipv4.ip_forward = 1' >> /etc/sysctl.d/kubernetes.conf
-      sysctl --system
-      sudo mkdir -m 0755 -p /etc/apt/keyrings
-      curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-      echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-      $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-      apt update && apt-get install containerd.io -y
-      #sed -e '/cri/ s/^#*/#/' -i /etc/containerd/config.toml 
-      containerd config default > /etc/containerd/config.toml
-      echo "runtime-endpoint: unix:///run/containerd/containerd.sock" > /etc/crictl.yaml
-      echo "image-endpoint: unix:///run/containerd/containerd.sock" >> /etc/crictl.yaml
-      echo "timeout: 10" >> /etc/crictl.yaml
-      echo "debug: false" >> /etc/crictl.yaml
-      systemctl restart containerd.service 
-      echo 'deb http://apt.kubernetes.io/ kubernetes-xenial main' > /etc/apt/sources.list.d/kubernetes.list
-      curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add -
-      apt-get update
-      apt-get install -y kubeadm$1 kubelet$1 kubectl$1 etcd-client
-      apt-mark hold kubelet kubeadm kubectl
-      sed -i '/cp/d' /etc/hosts
-      echo '192.168.56.21  k8scp  cp' >> /etc/hosts
-      echo '192.168.56.22  worker' >> /etc/hosts
-      echo '192.168.56.23  student' >> /etc/hosts
+      #echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/k8s.gpg] http://apt.kubernetes.io/ kubernetes-xenial main" > /etc/apt/sources.list.d/kubernetes.list
+      #curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /etc/apt/keyrings/k8s.gpg
+      #apt-get update
+      #apt-get install -y kubeadm$1 kubelet$1 kubectl$1 etcd-client
+      #apt-mark hold kubelet kubeadm kubectl
       kubeadm init --apiserver-advertise-address=192.168.56.21 --pod-network-cidr=10.244.0.0/16 | tee /root/kubeadm-init.out
       kubeadm token create --print-join-command > /vagrant/kubeadm_join.sh
       mkdir -p $HOME/.kube
-      sudo cp /etc/kubernetes/admin.conf $HOME/.kube/config
-      sudo cp /etc/kubernetes/admin.conf /vagrant/
-      sudo chown $(id -u):$(id -g) $HOME/.kube/config
-      runuser -l vagrant -c 'echo "sudo -i"  >> $HOME/.bashrc'
+      cp /etc/kubernetes/admin.conf $HOME/.kube/config
+      cp /etc/kubernetes/admin.conf /vagrant/
+      chown $(id -u):$(id -g) $HOME/.kube/config
       #kubectl apply -f https://docs.projectcalico.org/manifests/calico.yaml
       kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.25.0/manifests/calico.yaml
       #kubectl apply -f https://github.com/weaveworks/weave/releases/download/v2.8.1/weave-daemonset-k8s.yaml
       #kubectl apply -f https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml
       apt-get install bash-completion -y
-      source <(kubectl completion bash)
-      echo "source <(kubectl completion bash)" >> $HOME/.bashrc
-      echo "alias k=kubectl" >> $HOME/.bashrc
-      echo "complete -F __start_kubectl k" >> $HOME/.bashrc
       #kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.5.1/deploy/static/provider/baremetal/deploy.yaml
       kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/baremetal/deploy.yaml
       #kubectl apply -f https://raw.githubusercontent.com/open-policy-agent/gatekeeper/master/deploy/gatekeeper.yaml
       #echo "openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt | openssl rsa -pubin -outform der 2>/dev/null | openssl dgst -sha256 -hex | sed 's/ˆ.* //'" > /home/student/kube_get_ca.sh
       # Install Falco
-      curl -s https://falco.org/repo/falcosecurity-packages.asc | apt-key add -
-      echo "deb https://download.falco.org/packages/deb stable main" | tee -a /etc/apt/sources.list.d/falcosecurity.list
+      curl -s https://falco.org/repo/falcosecurity-packages.asc | gpg --dearmor -o /etc/apt/keyrings/falco.gpg
+      echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/falco.gpg] https://download.falco.org/packages/deb stable main" | tee -a /etc/apt/sources.list.d/falcosecurity.list
       apt-get update -y
-      apt install -y dkms make linux-headers-$(uname -r)
+      apt-get install -y dkms make linux-headers-$(uname -r)
       FALCO_FRONTEND=noninteractive apt-get install -y falco
       falco-driver-loader bpf
       systemctl start falco-bpf.service
@@ -84,8 +135,8 @@ Vagrant.configure("2") do |config|
   end
 
   config.vm.define "worker" do |worker|
-    worker.vm.box = "ubuntu/focal64"
-    worker.vm.network "private_network", ip: "192.168.56.22"
+    worker.vm.box = UBU_VER
+    worker.vm.network "private_network", ip: K8S_IP2
     worker.vm.hostname = "worker"
     worker.vm.provider "virtualbox" do |vb|
       vb.memory = 4096
@@ -105,20 +156,21 @@ Vagrant.configure("2") do |config|
       echo 'net.bridge.bridge-nf-call-iptables = 1' >> /etc/sysctl.d/kubernetes.conf
       echo 'net.ipv4.ip_forward = 1' >> /etc/sysctl.d/kubernetes.conf
       sysctl --system
-      sudo mkdir -m 0755 -p /etc/apt/keyrings
-      curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+      mkdir -m 0755 -p /etc/apt/keyrings
+      curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
       echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-      $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-      apt update && apt-get install containerd.io -y
+      $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+      apt-get update && apt-get install containerd.io -y
       #sed -e '/cri/ s/^#*/#/' -i /etc/containerd/config.toml 
       containerd config default > /etc/containerd/config.toml
       echo "runtime-endpoint: unix:///run/containerd/containerd.sock" > /etc/crictl.yaml
       echo "image-endpoint: unix:///run/containerd/containerd.sock" >> /etc/crictl.yaml
       echo "timeout: 10" >> /etc/crictl.yaml
       echo "debug: false" >> /etc/crictl.yaml
+      sed -i 's/3.6/3.9/' /etc/containerd/config.toml
       systemctl restart containerd.service 
       echo 'deb http://apt.kubernetes.io/ kubernetes-xenial main' > /etc/apt/sources.list.d/kubernetes.list
-      curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add -
+      curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /etc/apt/keyrings/k8s.gpg
       apt-get update
       apt-get install -y kubeadm$1 kubelet$1 kubectl$1
       apt-mark hold kubelet kubeadm kubectl
@@ -132,10 +184,10 @@ Vagrant.configure("2") do |config|
       netplan apply
       sh /vagrant/kubeadm_join.sh
       # Install Falco
-      curl -s https://falco.org/repo/falcosecurity-packages.asc | apt-key add -
+      curl -s https://falco.org/repo/falcosecurity-packages.asc | gpg --dearmor -o /etc/apt/keyrings/falco.gpg
       echo "deb https://download.falco.org/packages/deb stable main" | tee -a /etc/apt/sources.list.d/falcosecurity.list
       apt-get update -y
-      apt install -y dkms make linux-headers-$(uname -r)
+      apt-get install -y dkms make linux-headers-$(uname -r)
       FALCO_FRONTEND=noninteractive apt-get install -y falco
       falco-driver-loader bpf
       systemctl start falco-bpf.service
@@ -143,8 +195,8 @@ Vagrant.configure("2") do |config|
   end
 
   config.vm.define "student" do |student|
-    student.vm.box = "ubuntu/focal64"
-    student.vm.network "private_network", ip: "192.168.56.23"
+    student.vm.box = UBU_VER
+    student.vm.network "private_network", ip: K8S_IP3
     student.vm.hostname = "student"
     student.vm.provision "shell", args: "#{K8S_VER}", inline: <<-SHELLSTUDENT
       cp /vagrant/vagrant_id_rsa $HOME/.ssh/id_rsa
@@ -159,7 +211,7 @@ Vagrant.configure("2") do |config|
       runuser -l student -c 'sudo cp /vagrant/vagrant_id_rsa.pub $HOME/.ssh/id_rsa.pub'
       runuser -l student -c 'sudo chown student:student .ssh/id_rsa*'
       echo 'deb http://apt.kubernetes.io/ kubernetes-xenial main' > /etc/apt/sources.list.d/kubernetes.list
-      curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add -
+      curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /etc/apt/keyrings/falco.gpg
       apt-get update
       apt-get install -y kubeadm$1 kubectl$1
       apt-mark hold kubelet kubeadm kubectl
