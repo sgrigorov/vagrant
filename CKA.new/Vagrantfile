@@ -16,7 +16,7 @@ K8S_IP3 = K8S_IP_A + K8S_IP_B.succ.succ
 K8S_IPs = Array[K8S_IP1, K8S_IP2, K8S_IP3]
 
 $os_init_script = <<-SCRIPT_Init_OS
-echo ">------------------------------ Generate rsa keys ------------------------------<"
+echo ">------------------------------ RSA keys ------------------------------<"
 if [ ! -f "/vagrant/vagrant_id_rsa.pub"  ] ||  [ ! -f "/vagrant/vagrant_id_rsa" ]
 then
   ssh-keygen -f $HOME/.ssh/id_rsa -P ""
@@ -53,7 +53,7 @@ SCRIPT_Init_OS
 $k8s_install_script = <<-SCRIPT_Install_K8S
 export DEBIAN_FRONTEND=noninteractive
 echo ">------------------------------ Install apps ------------------------------<"
-apt-get install curl apt-transport-https vim git wget gnupg2 software-properties-common apt-transport-https ca-certificates uidmap -y
+apt-get install curl vim git wget gnupg2 software-properties-common apt-transport-https ca-certificates uidmap -y
 echo ">------------------------------ swapoff ------------------------------<"
 swapoff -a
 echo ">------------------------------ modprobe ------------------------------<"
@@ -91,7 +91,7 @@ fi
 echo "K8S version: $k8s_ver"
 k8s_maj_ver=$(echo $k8s_ver | cut -d"." -f1,2 )
 curl -fsSL https://pkgs.k8s.io/core:/stable:/v$k8s_maj_ver/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-echo deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v$k8s_maj_ver/deb/ / | tee /etc/apt/sources.list.d/kubernetes.list
+echo deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v$k8s_maj_ver/deb/ / | tee /etc/apt/sources.list.d/kubernetes.list
 apt-get update
 
 echo ">------------------------------ Install K8s ------------------------------<"
@@ -101,6 +101,101 @@ apt-get install -y kubeadm=$k8s_bin_ver kubelet=$k8s_bin_ver kubectl=$k8s_bin_ve
 apt-mark hold kubelet kubeadm kubectl
 
 SCRIPT_Install_K8S
+
+$k8s_cluster_init_script = <<-SCRIPT_Init_K8S
+echo ">------------------------------ K8s init ------------------------------<"
+kubeadm init --apiserver-advertise-address=$1 --pod-network-cidr=10.244.0.0/16 | tee /root/kubeadm-init.out
+echo ">------------------------------ K8s token ------------------------------<"
+kubeadm token create --print-join-command > /vagrant/kubeadm_join.sh
+cp /etc/kubernetes/admin.conf /vagrant/
+echo ">------------------------------ K8s .kube/config ------------------------------<"
+export KUBECONFIG=/etc/kubernetes/admin.conf
+# mkdir -p $HOME/.kube
+# cp /etc/kubernetes/admin.conf $HOME/.kube/config
+# chown $(id -u):$(id -g) $HOME/.kube/config
+echo ">------------------------------ K8s apply ------------------------------<"
+#kubectl apply -f https://docs.projectcalico.org/manifests/calico.yaml
+kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.26.3/manifests/calico.yaml
+#kubectl apply -f https://github.com/weaveworks/weave/releases/download/v2.8.1/weave-daemonset-k8s.yaml
+#kubectl apply -f https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml
+#kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.5.1/deploy/static/provider/baremetal/deploy.yaml
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/baremetal/deploy.yaml
+#kubectl apply -f https://raw.githubusercontent.com/open-policy-agent/gatekeeper/master/deploy/gatekeeper.yaml
+#echo "openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt | openssl rsa -pubin -outform der 2>/dev/null | openssl dgst -sha256 -hex | sed 's/ˆ.* //'" > /home/student/kube_get_ca.sh
+
+SCRIPT_Init_K8S
+
+$k8s_node_configure_script = <<-SCRIPT_Config_K8S_node
+export DEBIAN_FRONTEND=noninteractive
+echo ">------------------------------ Install Falco ------------------------------<"
+curl -s https://falco.org/repo/falcosecurity-packages.asc | gpg --dearmor -o /etc/apt/keyrings/falco.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/falco.gpg] https://download.falco.org/packages/deb stable main" | tee -a /etc/apt/sources.list.d/falcosecurity.list
+apt-get update -y
+apt-get install -y dkms make linux-headers-$(uname -r)
+FALCO_FRONTEND=noninteractive apt-get install -y falco
+falco-driver-loader bpf
+systemctl start falco-bpf.service
+
+echo ">------------------------------ Post OS script ------------------------------<"
+mkdir -p $HOME/.kube
+sudo cp /vagrant/admin.conf $HOME/.kube/config
+sudo chown $(id -u):$(id -g) $HOME/.kube/config
+
+SCRIPT_Config_K8S_node
+
+$k8s_worker_init_script = <<-SCRIPT_Init_K8S_worker
+echo ">------------------------------ K8s init ------------------------------<"
+echo "      routes:" >> /etc/netplan/50-vagrant.yaml
+echo "      - to: 10.96.0.0/12" >> /etc/netplan/50-vagrant.yaml
+echo "        via: $1" >> /etc/netplan/50-vagrant.yaml
+netplan apply
+sh /vagrant/kubeadm_join.sh
+
+SCRIPT_Init_K8S_worker
+
+$k8s_student_init_script = <<-SCRIPT_Init_K8S_student
+export DEBIAN_FRONTEND=noninteractive
+useradd -m -s /bin/bash -p sakZ/dnex68yw student
+echo 'student ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/student
+chmod 440 /etc/sudoers.d/student
+runuser -l student -c 'mkdir $HOME/.ssh'
+runuser -l student -c 'chmod go-rwx $HOME/.ssh'
+runuser -l student -c 'sudo cp /vagrant/vagrant_id_rsa $HOME/.ssh/id_rsa'
+runuser -l student -c 'sudo cp /vagrant/vagrant_id_rsa.pub $HOME/.ssh/id_rsa.pub'
+runuser -l student -c 'sudo chown student:student .ssh/id_rsa*'
+mkdir -m 0755 -p /etc/apt/keyrings
+if [ -z "$1" ]
+  then 
+    k8s_ver=$(curl -s https://cdn.dl.k8s.io/release/stable.txt | cut -c 2- )
+  else
+    k8s_ver=$1
+fi
+echo "K8S version: $k8s_ver"
+k8s_maj_ver=$(echo $k8s_ver | cut -d"." -f1,2 )
+curl -fsSL https://pkgs.k8s.io/core:/stable:/v$k8s_maj_ver/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+echo deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v$k8s_maj_ver/deb/ / | tee /etc/apt/sources.list.d/kubernetes.list
+apt-get update
+
+echo ">------------------------------ Install K8s ------------------------------<"
+k8s_bin_ver=$(apt-cache madison kubectl | grep $k8s_ver | head -n 1 | cut -d"|" -f2 | cut -d" " -f2)
+echo "k8s_bin_ver: $k8s_bin_ver"
+apt-get install -y kubeadm=$k8s_bin_ver kubectl=$k8s_bin_ver
+apt-mark hold kubeadm kubectl
+
+runuser -l student -c 'mkdir -p $HOME/.kube'
+runuser -l student -c 'sudo cp /vagrant/admin.conf $HOME/.kube/config'
+runuser -l student -c 'sudo chown $(id -u):$(id -g) $HOME/.kube/config'
+runuser -l student -c 'echo "source <(kubectl completion bash)" >> $HOME/.bashrc'
+runuser -l student -c 'echo "alias k=kubectl" >> $HOME/.bashrc'
+runuser -l student -c 'echo "complete -F __start_kubectl k" >> $HOME/.bashrc'
+runuser -l vagrant -c 'sed -i "s/sudo -i/sudo su - student/" $HOME/.bashrc'
+
+echo ">------------------------------ Install Helm ------------------------------<"
+curl -fsSL https://baltocdn.com/helm/signing.asc | gpg --dearmor -o /etc/apt/keyrings/helm.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/helm.gpg] https://baltocdn.com/helm/stable/debian/ all main" | tee /etc/apt/sources.list.d/helm-stable-debian.list
+apt-get update
+apt-get install helm -y
+SCRIPT_Init_K8S_student
 
 Vagrant.configure("2") do |config|
   config.vm.define "cp" do |cp|
@@ -112,32 +207,8 @@ Vagrant.configure("2") do |config|
     end
     cp.vm.provision "shell", args: K8S_IPs, inline: $os_init_script
     cp.vm.provision "shell", args: K8S_VER, inline: $k8s_install_script
-    cp.vm.provision "shell", args: "#{K8S_VER}", inline: <<-SHELLCP
-
-      kubeadm init --apiserver-advertise-address=192.168.56.21 --pod-network-cidr=10.244.0.0/16 | tee /root/kubeadm-init.out
-      kubeadm token create --print-join-command > /vagrant/kubeadm_join.sh
-      mkdir -p $HOME/.kube
-      cp /etc/kubernetes/admin.conf $HOME/.kube/config
-      cp /etc/kubernetes/admin.conf /vagrant/
-      chown $(id -u):$(id -g) $HOME/.kube/config
-      #kubectl apply -f https://docs.projectcalico.org/manifests/calico.yaml
-      kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.25.0/manifests/calico.yaml
-      #kubectl apply -f https://github.com/weaveworks/weave/releases/download/v2.8.1/weave-daemonset-k8s.yaml
-      #kubectl apply -f https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml
-      apt-get install bash-completion -y
-      #kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.5.1/deploy/static/provider/baremetal/deploy.yaml
-      kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/baremetal/deploy.yaml
-      #kubectl apply -f https://raw.githubusercontent.com/open-policy-agent/gatekeeper/master/deploy/gatekeeper.yaml
-      #echo "openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt | openssl rsa -pubin -outform der 2>/dev/null | openssl dgst -sha256 -hex | sed 's/ˆ.* //'" > /home/student/kube_get_ca.sh
-      # Install Falco
-      curl -s https://falco.org/repo/falcosecurity-packages.asc | gpg --dearmor -o /etc/apt/keyrings/falco.gpg
-      echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/falco.gpg] https://download.falco.org/packages/deb stable main" | tee -a /etc/apt/sources.list.d/falcosecurity.list
-      apt-get update -y
-      apt-get install -y dkms make linux-headers-$(uname -r)
-      FALCO_FRONTEND=noninteractive apt-get install -y falco
-      falco-driver-loader bpf
-      systemctl start falco-bpf.service
-    SHELLCP
+    cp.vm.provision "shell", args: K8S_CP_IP, inline: $k8s_cluster_init_script
+    cp.vm.provision "shell", inline: $k8s_node_configure_script
   end
 
   config.vm.define "worker" do |worker|
@@ -147,99 +218,17 @@ Vagrant.configure("2") do |config|
     worker.vm.provider "virtualbox" do |vb|
       vb.memory = 4096
     end
-    worker.vm.provision "shell", args: "#{K8S_VER}", inline: <<-SHELLWORKER
-      cp /vagrant/vagrant_id_rsa $HOME/.ssh/id_rsa
-      cp /vagrant/vagrant_id_rsa.pub $HOME/.ssh/id_rsa.pub
-      cp $HOME/.ssh/id_rsa.pub $HOME/.ssh/authorized_keys
-      runuser -l vagrant -c 'echo "sudo -i"  >> $HOME/.bashrc'
-      apt-get update && apt-get upgrade -y
-      apt-get install -y vim
-      apt-get install curl apt-transport-https vim git wget gnupg2 software-properties-common apt-transport-https ca-certificates uidmap -y
-      swapoff -a
-      modprobe overlay
-      modprobe br_netfilter
-      echo 'net.bridge.bridge-nf-call-ip6tables = 1' >> /etc/sysctl.d/kubernetes.conf
-      echo 'net.bridge.bridge-nf-call-iptables = 1' >> /etc/sysctl.d/kubernetes.conf
-      echo 'net.ipv4.ip_forward = 1' >> /etc/sysctl.d/kubernetes.conf
-      sysctl --system
-      mkdir -m 0755 -p /etc/apt/keyrings
-      curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-      echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-      $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
-      apt-get update && apt-get install containerd.io -y
-      #sed -e '/cri/ s/^#*/#/' -i /etc/containerd/config.toml 
-      containerd config default > /etc/containerd/config.toml
-      echo "runtime-endpoint: unix:///run/containerd/containerd.sock" > /etc/crictl.yaml
-      echo "image-endpoint: unix:///run/containerd/containerd.sock" >> /etc/crictl.yaml
-      echo "timeout: 10" >> /etc/crictl.yaml
-      echo "debug: false" >> /etc/crictl.yaml
-      sed -i 's/3.6/3.9/' /etc/containerd/config.toml
-      systemctl restart containerd.service 
-      echo 'deb http://apt.kubernetes.io/ kubernetes-xenial main' > /etc/apt/sources.list.d/kubernetes.list
-      curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /etc/apt/keyrings/k8s.gpg
-      apt-get update
-      apt-get install -y kubeadm$1 kubelet$1 kubectl$1
-      apt-mark hold kubelet kubeadm kubectl
-      sed -i '/worker/d' /etc/hosts
-      echo '192.168.56.21  k8scp  cp' >> /etc/hosts
-      echo '192.168.56.22  worker' >> /etc/hosts
-      echo '192.168.56.23  student' >> /etc/hosts
-      echo "      routes:" >> /etc/netplan/50-vagrant.yaml
-      echo "      - to: 10.96.0.0/12" >> /etc/netplan/50-vagrant.yaml
-      echo "        via: 192.168.56.21" >> /etc/netplan/50-vagrant.yaml
-      netplan apply
-      sh /vagrant/kubeadm_join.sh
-      # Install Falco
-      curl -s https://falco.org/repo/falcosecurity-packages.asc | gpg --dearmor -o /etc/apt/keyrings/falco.gpg
-      echo "deb https://download.falco.org/packages/deb stable main" | tee -a /etc/apt/sources.list.d/falcosecurity.list
-      apt-get update -y
-      apt-get install -y dkms make linux-headers-$(uname -r)
-      FALCO_FRONTEND=noninteractive apt-get install -y falco
-      falco-driver-loader bpf
-      systemctl start falco-bpf.service
-    SHELLWORKER
+    worker.vm.provision "shell", args: K8S_IPs, inline: $os_init_script
+    worker.vm.provision "shell", args: K8S_VER, inline: $k8s_install_script
+    worker.vm.provision "shell", args: K8S_CP_IP, inline: $k8s_worker_init_script
+    worker.vm.provision "shell", inline: $k8s_node_configure_script
   end
 
   config.vm.define "student" do |student|
     student.vm.box = UBU_VER
     student.vm.network "private_network", ip: K8S_IP3
     student.vm.hostname = "student"
-    student.vm.provision "shell", args: "#{K8S_VER}", inline: <<-SHELLSTUDENT
-      cp /vagrant/vagrant_id_rsa $HOME/.ssh/id_rsa
-      cp /vagrant/vagrant_id_rsa.pub $HOME/.ssh/id_rsa.pub
-      cp $HOME/.ssh/id_rsa.pub $HOME/.ssh/authorized_keys
-      useradd -m -s /bin/bash -p sakZ/dnex68yw student
-      echo 'student ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/student
-      chmod 440 /etc/sudoers.d/student
-      runuser -l student -c 'mkdir $HOME/.ssh'
-      runuser -l student -c 'chmod go-rwx $HOME/.ssh'
-      runuser -l student -c 'sudo cp /vagrant/vagrant_id_rsa $HOME/.ssh/id_rsa'
-      runuser -l student -c 'sudo cp /vagrant/vagrant_id_rsa.pub $HOME/.ssh/id_rsa.pub'
-      runuser -l student -c 'sudo chown student:student .ssh/id_rsa*'
-      echo 'deb http://apt.kubernetes.io/ kubernetes-xenial main' > /etc/apt/sources.list.d/kubernetes.list
-      curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /etc/apt/keyrings/falco.gpg
-      apt-get update
-      apt-get install -y kubeadm$1 kubectl$1
-      apt-mark hold kubelet kubeadm kubectl
-      runuser -l student -c 'mkdir -p $HOME/.kube'
-      runuser -l student -c 'sudo cp /vagrant/admin.conf $HOME/.kube/config'
-      runuser -l student -c 'sudo chown $(id -u):$(id -g) $HOME/.kube/config'
-      #runuser -l student -c 'wget https://training.linuxfoundation.org/cm/LFS258/LFS258_V2022-09-02_SOLUTIONS.tar.xz --user=LFtraining --password=Penguin2014'
-      #runuser -l student -c 'tar -xvf LFS258_V2022-09-02_SOLUTIONS.tar.xz'
-      apt-get update && apt-get upgrade -y
-      echo '192.168.56.21  k8scp  cp' >> /etc/hosts
-      echo '192.168.56.22  worker' >> /etc/hosts
-      echo '192.168.56.23  student' >> /etc/hosts
-      runuser -l student -c 'source <(kubectl completion bash)'
-      runuser -l student -c 'echo "source <(kubectl completion bash)" >> $HOME/.bashrc'
-      runuser -l student -c 'echo "alias k=kubectl" >> $HOME/.bashrc'
-      runuser -l student -c 'echo "complete -F __start_kubectl k" >> $HOME/.bashrc'
-      runuser -l vagrant -c 'echo "sudo su - student" >> $HOME/.bashrc'
-      curl https://baltocdn.com/helm/signing.asc | gpg --dearmor | sudo tee /usr/share/keyrings/helm.gpg > /dev/null
-      apt-get install apt-transport-https --yes
-      echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/helm.gpg] https://baltocdn.com/helm/stable/debian/ all main" | sudo tee /etc/apt/sources.list.d/helm-stable-debian.list
-      apt-get update
-      apt-get install helm
-    SHELLSTUDENT
+    student.vm.provision "shell", args: K8S_IPs, inline: $os_init_script
+    student.vm.provision "shell", args: K8S_VER, inline: $k8s_student_init_script
   end
 end
