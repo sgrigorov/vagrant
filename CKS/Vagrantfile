@@ -1,11 +1,62 @@
 #
-#K8S_VER = ""
-K8S_VER = "1.24.10"
+# K8S_VER = ""
+K8S_VER = "1.26.9"
 K8S_VIP = "192.168.56.30"
+UBU_VER = "ubuntu/focal64" # 20.04
+# UBU_VER = "ubuntu/jammy64" # 22.04
+#
+#
+# Calculated Variables
+K8S_IP_A = K8S_VIP.chop
+K8S_IP_B = K8S_VIP.slice(-1)
+K8S_CP_IP1 = K8S_IP_A + K8S_IP_B.succ
+K8S_CP_IP2 = K8S_IP_A + K8S_IP_B.succ.succ
+K8S_CP_IP3 = K8S_IP_A + K8S_IP_B.succ.succ.succ
+K8S_W_IP1 = K8S_IP_A + K8S_IP_B.succ.succ.succ.succ
+K8S_W_IP2 = K8S_IP_A + K8S_IP_B.succ.succ.succ.succ.succ
+K8S_W_IP3 = K8S_IP_A + K8S_IP_B.succ.succ.succ.succ.succ.succ
+
+K8S_CP_IPs = Array[K8S_CP_IP1, K8S_CP_IP2, K8S_CP_IP3]
+K8S_W_IPs = Array[K8S_W_IP1, K8S_W_IP2, K8S_W_IP3]
+
+
+
 K8S_IF = "enp0s8"
 #
-K8S_OS_IMAGE = "ubuntu/focal64"
 #
+$os_init_script = <<-SCRIPT_Init_OS
+echo ">------------------------------ RSA keys ------------------------------<"
+if [ ! -f "/vagrant/vagrant_id_rsa.pub"  ] ||  [ ! -f "/vagrant/vagrant_id_rsa" ]
+then
+  ssh-keygen -f $HOME/.ssh/id_rsa -P ""
+  cp $HOME/.ssh/id_rsa /vagrant/vagrant_id_rsa
+  cp $HOME/.ssh/id_rsa.pub /vagrant/vagrant_id_rsa.pub
+else
+  cp /vagrant/vagrant_id_rsa $HOME/.ssh/id_rsa
+  cp /vagrant/vagrant_id_rsa.pub $HOME/.ssh/id_rsa.pub
+fi
+cp $HOME/.ssh/id_rsa.pub $HOME/.ssh/authorized_keys
+
+echo ">------------------------------ OS update ------------------------------<"
+export DEBIAN_FRONTEND=noninteractive
+apt-get update && apt-get upgrade -y
+
+echo ">------------------------------ setup /etc/hosts ------------------------------<"
+sed -i '/cp/d' /etc/hosts
+echo $1  k8scp  cp >> /etc/hosts
+echo $2  worker >> /etc/hosts
+echo $3  student >> /etc/hosts
+
+echo ">------------------------------ setup .bashrc ------------------------------<"
+runuser -l vagrant -c 'echo "sudo -i"  >> $HOME/.bashrc'
+
+apt-get install bash-completion -y
+#source <(kubectl completion bash)
+echo "source <(kubectl completion bash)" >> $HOME/.bashrc
+echo "alias k=kubectl" >> $HOME/.bashrc
+echo "complete -F __start_kubectl k" >> $HOME/.bashrc
+
+SCRIPT_Init_OS
 #
 #
 $install_script = <<-SCRIPT
@@ -140,33 +191,43 @@ SCRIPT
 Vagrant.configure("2") do |config|
   (1..3).each do |i|
     config.vm.define "cp#{i}" do |node|
-      node.vm.box = "#{K8S_OS_IMAGE}"
+      node.vm.box = UBU_VER
       node.vm.network "private_network", ip: "192.168.56.3#{i}"
       node.vm.hostname = "cp#{i}"
       node.vm.provider "virtualbox" do |vb|
         vb.memory = 2048
       end
-      node.vm.provision "shell", args: ["cp#{i}","#{K8S_VER}","#{K8S_VIP}","#{K8S_IF}"],  inline: $install_script
+      node.vm.provision "shell", args: K8S_IPs, inline: $os_init_script
+      #node.vm.provision "shell", args: K8S_VER, inline: $k8s_install_script
+      #node.vm.provision "shell", args: K8S_VIP, inline: $k8s_cluster_init_script
+      #node.vm.provision "shell", inline: $k8s_node_configure_script
+      #node.vm.provision "shell", args: ["cp#{i}","#{K8S_VER}","#{K8S_VIP}","#{K8S_IF}"],  inline: $install_script
     end
   end
 
   (1..3).each do |i|
     config.vm.define "worker#{i}" do |node|
-      node.vm.box = "#{K8S_OS_IMAGE}"
+      node.vm.box = "#{UBU_VER}"
       node.vm.network "private_network", ip: "192.168.56.4#{i}"
       node.vm.hostname = "worker#{i}"
 
       config.vm.provider "virtualbox" do |vb|
         vb.memory = 2048
       end
-      node.vm.provision "shell", args: ["worker#{i}","#{K8S_VER}","#{K8S_VIP}","#{K8S_IF}"],  inline: $install_script
+      node.vm.provision "shell", args: K8S_IPs, inline: $os_init_script
+      #node.vm.provision "shell", args: K8S_VER, inline: $k8s_install_script
+      #node.vm.provision "shell", args: K8S_VIP, inline: $k8s_worker_init_script
+      #node.vm.provision "shell", inline: $k8s_node_configure_script
+      #node.vm.provision "shell", args: ["worker#{i}","#{K8S_VER}","#{K8S_VIP}","#{K8S_IF}"],  inline: $install_script
     end
   end
 
   config.vm.define "student" do |student|
-    student.vm.box = "#{K8S_OS_IMAGE}"
+    student.vm.box = "#{UBU_VER}"
     student.vm.network "private_network", ip: "192.168.56.50"
     student.vm.hostname = "student"
-    student.vm.provision "shell", args: ["student","#{K8S_VER}","#{K8S_VIP}","#{K8S_IF}"],  inline: $install_script
+    student.vm.provision "shell", args: K8S_IPs, inline: $os_init_script
+    #student.vm.provision "shell", args: K8S_VER, inline: $k8s_student_init_script
+    #student.vm.provision "shell", args: ["student","#{K8S_VER}","#{K8S_VIP}","#{K8S_IF}"],  inline: $install_script
   end
 end
