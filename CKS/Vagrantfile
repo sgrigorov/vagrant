@@ -15,10 +15,11 @@ K8S_CP_IP3 = K8S_IP_A + K8S_IP_B.succ.succ.succ
 K8S_W_IP1 = K8S_IP_A + K8S_IP_B.succ.succ.succ.succ
 K8S_W_IP2 = K8S_IP_A + K8S_IP_B.succ.succ.succ.succ.succ
 K8S_W_IP3 = K8S_IP_A + K8S_IP_B.succ.succ.succ.succ.succ.succ
+K8S_STUDENT = K8S_IP_A + K8S_IP_B.succ.succ.succ.succ.succ.succ.succ
 
 K8S_CP_IPs = Array[K8S_CP_IP1, K8S_CP_IP2, K8S_CP_IP3]
 K8S_W_IPs = Array[K8S_W_IP1, K8S_W_IP2, K8S_W_IP3]
-
+K8S_IPs = Array[K8S_VIP, K8S_CP_IP1, K8S_CP_IP2, K8S_CP_IP3, K8S_W_IP1, K8S_W_IP2, K8S_W_IP3, K8S_STUDENT]
 
 
 K8S_IF = "enp0s8"
@@ -42,10 +43,15 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update && apt-get upgrade -y
 
 echo ">------------------------------ setup /etc/hosts ------------------------------<"
-sed -i '/cp/d' /etc/hosts
-echo $1  k8scp  cp >> /etc/hosts
-echo $2  worker >> /etc/hosts
-echo $3  student >> /etc/hosts
+sed -i "/$HOSTNAME/d" /etc/hosts
+echo $1  k8scp >> /etc/hosts
+echo $2  cp1 >> /etc/hosts
+echo $3  cp2 >> /etc/hosts
+echo $4  cp3 >> /etc/hosts
+echo $5  worker1 >> /etc/hosts
+echo $6  worker2 >> /etc/hosts
+echo $7  worker3 >> /etc/hosts
+echo $8  student >> /etc/hosts
 
 echo ">------------------------------ setup .bashrc ------------------------------<"
 runuser -l vagrant -c 'echo "sudo -i"  >> $HOME/.bashrc'
@@ -59,6 +65,57 @@ echo "complete -F __start_kubectl k" >> $HOME/.bashrc
 SCRIPT_Init_OS
 #
 #
+$k8s_install_script = <<-SCRIPT_Install_K8S
+export DEBIAN_FRONTEND=noninteractive
+echo ">------------------------------ Install apps ------------------------------<"
+apt-get install curl vim git wget gnupg2 software-properties-common apt-transport-https ca-certificates uidmap -y
+echo ">------------------------------ swapoff ------------------------------<"
+swapoff -a
+echo ">------------------------------ modprobe ------------------------------<"
+modprobe overlay
+modprobe br_netfilter
+echo ">------------------------------ sysctl set ------------------------------<"
+echo 'net.bridge.bridge-nf-call-ip6tables = 1' >> /etc/sysctl.d/kubernetes.conf
+echo 'net.bridge.bridge-nf-call-iptables = 1' >> /etc/sysctl.d/kubernetes.conf
+echo 'net.ipv4.ip_forward = 1' >> /etc/sysctl.d/kubernetes.conf
+echo ">------------------------------ sysctl reload ------------------------------<"
+sysctl --system
+echo ">------------------------------ Docker repo ------------------------------<"
+mkdir -m 0755 -p /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+$(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+echo ">------------------------------ Install contaierd ------------------------------<"
+apt-get update && apt-get install containerd.io -y
+containerd config default > /etc/containerd/config.toml
+echo "runtime-endpoint: unix:///run/containerd/containerd.sock" > /etc/crictl.yaml
+echo "image-endpoint: unix:///run/containerd/containerd.sock" >> /etc/crictl.yaml
+echo "timeout: 10" >> /etc/crictl.yaml
+echo "debug: false" >> /etc/crictl.yaml
+sed -i 's/3.6/3.9/' /etc/containerd/config.toml
+sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
+systemctl restart containerd.service 
+echo ">------------------------------ K8s repo ------------------------------<"
+if [ -z "$1" ]
+  then 
+    k8s_ver=$(curl -s https://cdn.dl.k8s.io/release/stable.txt | cut -c 2- )
+  else
+    k8s_ver=$1
+fi
+echo "K8S version: $k8s_ver"
+k8s_maj_ver=$(echo $k8s_ver | cut -d"." -f1,2 )
+curl -fsSL https://pkgs.k8s.io/core:/stable:/v$k8s_maj_ver/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+echo deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v$k8s_maj_ver/deb/ / | tee /etc/apt/sources.list.d/kubernetes.list
+apt-get update
+
+echo ">------------------------------ Install K8s ------------------------------<"
+k8s_bin_ver=$(apt-cache madison kubectl | grep $k8s_ver- | head -n 1 | cut -d"|" -f2 | cut -d" " -f2)
+echo "k8s_bin_ver: $k8s_bin_ver"
+apt-get install -y kubeadm=$k8s_bin_ver kubelet=$k8s_bin_ver kubectl=$k8s_bin_ver etcd-client
+apt-mark hold kubelet kubeadm kubectl
+
+SCRIPT_Install_K8S
+#
 $install_script = <<-SCRIPT
 echo "---------------------------------------------------------------------------------"
 echo " 1: " $1
@@ -68,21 +125,12 @@ echo " 4: " $4
 echo "---------------------------------------------------------------------------------"
 echo "script_all_1"
 echo "---------------------------------------------------------------------------------"
-apt-get update && apt-get upgrade -y
-apt-get install -y vim bash-completion jq
-sed -i "/$HOSTNAME/d" /etc/hosts
-echo '192.168.56.30  k8svip' >> /etc/hosts
-echo '192.168.56.31  cp1' >> /etc/hosts
-echo '192.168.56.32  cp2' >> /etc/hosts
-echo '192.168.56.33  cp3' >> /etc/hosts
-echo '192.168.56.41  worker1' >> /etc/hosts
-echo '192.168.56.42  worker2' >> /etc/hosts
-echo '192.168.56.43  worker3' >> /etc/hosts
-echo '192.168.56.50  student' >> /etc/hosts
+
 echo "      routes:" >> /etc/netplan/50-vagrant.yaml
 echo "      - to: 10.96.0.0/12" >> /etc/netplan/50-vagrant.yaml
 echo "        via: 192.168.56.31" >> /etc/netplan/50-vagrant.yaml
 netplan apply
+
 shopt -s expand_aliases
 KVVERSION=$(curl -sL https://api.github.com/repos/kube-vip/kube-vip/releases | jq -r ".[0].name")
 alias kube-vip="ctr image pull ghcr.io/kube-vip/kube-vip:$KVVERSION; ctr run --rm --net-host ghcr.io/kube-vip/kube-vip:$KVVERSION vip /kube-vip"
@@ -90,34 +138,12 @@ echo 'shopt -s expand_aliases' > /root/kube-vip.sh
 echo 'KVVERSION=$(curl -sL https://api.github.com/repos/kube-vip/kube-vip/releases | jq -r ".[0].name")' >> /root/kube-vip.sh
 echo 'alias kube-vip="ctr image pull ghcr.io/kube-vip/kube-vip:$KVVERSION; ctr run --rm --net-host ghcr.io/kube-vip/kube-vip:$KVVERSION vip /kube-vip"' >> /root/kube-vip.sh
 echo "kube-vip manifest daemonset --interface $4 --address $3 --inCluster --taint --controlplane --services --arp --leaderElection | kubectl apply -f - " >> /root/kube-vip.sh
+
 if [ $1 != "student" ]; then 
   echo "---------------------------------------------------------------------------------"
   echo "script_cluster"
   echo "---------------------------------------------------------------------------------"
-  apt-get install curl apt-transport-https vim git wget gnupg2 software-properties-common apt-transport-https ca-certificates uidmap -y
-  swapoff -a
-  modprobe overlay
-  modprobe br_netfilter
-  echo overlay > /etc/modprobe.d/kubernetes.conf
-  echo br_netfilter >> /etc/modprobe.d/kubernetes.conf
-  echo 'net.bridge.bridge-nf-call-ip6tables = 1' >> /etc/sysctl.d/kubernetes.conf
-  echo 'net.bridge.bridge-nf-call-iptables = 1' >> /etc/sysctl.d/kubernetes.conf
-  echo 'net.ipv4.ip_forward = 1' >> /etc/sysctl.d/kubernetes.conf
-  sysctl --system
-  sudo mkdir -m 0755 -p /etc/apt/keyrings
-  curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-  $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-  apt update && apt-get install containerd.io -y
-  sed -e '/cri/ s/^#*/#/' -i /etc/containerd/config.toml 
-  systemctl restart containerd.service 
-  echo 'deb http://apt.kubernetes.io/ kubernetes-xenial main' > /etc/apt/sources.list.d/kubernetes.list
-  curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add -
-  apt-get update 
-  apt-get install -y kubeadm=$2-00 kubelet=$2-00 kubectl=$2-00 etcd-client
-  apt-mark hold kubelet kubeadm kubectl
-  echo "export KUBECONFIG=/etc/kubernetes/admin.conf" >> /root/.bashrc
-  runuser -l vagrant -c 'echo "sudo -i" >> $HOME/.bashrc'
+
   if [ $1 = "cp1" ]; then 
     echo "---------------------------------------------------------------------------------"
     echo "script_first_node"
