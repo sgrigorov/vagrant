@@ -1,7 +1,7 @@
 #
 # K8S_VER = ""
 K8S_VER = "1.26.9"
-K8S_CP_IP = "192.168.56.21"
+K8S_CP_IP = "192.168.56.24"
 UBU_VER = "ubuntu/focal64" # 20.04
 # UBU_VER = "ubuntu/jammy64" # 22.04
 #
