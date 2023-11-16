@@ -116,6 +116,14 @@ apt-mark hold kubelet kubeadm kubectl
 
 SCRIPT_Install_K8S
 #
+#
+#
+# https://github.com/kubernetes/kubeadm/blob/main/docs/ha-considerations.md#options-for-software-load-balancing
+#
+#
+#
+#
+#
 $install_script = <<-SCRIPT
 echo "---------------------------------------------------------------------------------"
 echo " 1: " $1
