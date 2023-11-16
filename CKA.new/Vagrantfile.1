@@ -1,0 +1,212 @@
+#
+#K8S_VER = ""
+K8S_VER = "1.27"
+K8S_CP_IP = "192.168.56.24"
+#UBU_VER = "ubuntu/focal64"
+UBU_VER = "ubuntu/jammy64"
+#
+# Calculated Variables
+K8S_IP_A = K8S_CP_IP.chop
+K8S_IP_B = K8S_CP_IP.slice(-1)
+K8S_IP1 = K8S_IP_A + K8S_IP_B
+K8S_IP2 = K8S_IP_A + K8S_IP_B.succ
+K8S_IP3 = K8S_IP_A + K8S_IP_B.succ.succ
+
+K8S_IPs = Array[K8S_IP1, K8S_IP2, K8S_IP3]
+
+#
+$os_init_script = <<-SCRIPT_Init_OS
+echo ">------------------------------ Generate rsa keys ------------------------------<"
+if [ ! -f "/vagrant/vagrant_id_rsa.pub"  ] ||  [ ! -f "/vagrant/vagrant_id_rsa" ]
+then
+  ssh-keygen -f $HOME/.ssh/id_rsa -P ""
+  cp $HOME/.ssh/id_rsa /vagrant/vagrant_id_rsa
+  cp $HOME/.ssh/id_rsa.pub /vagrant/vagrant_id_rsa.pub
+else
+  cp /vagrant/vagrant_id_rsa $HOME/.ssh/id_rsa
+  cp /vagrant/vagrant_id_rsa.pub $HOME/.ssh/id_rsa.pub
+fi
+cp $HOME/.ssh/id_rsa.pub $HOME/.ssh/authorized_keys
+
+echo ">------------------------------ OS update ------------------------------<"
+export DEBIAN_FRONTEND=noninteractive
+apt-get update && apt-get upgrade -y
+
+echo ">------------------------------ setup /etc/hosts ------------------------------<"
+sed -i '/cp/d' /etc/hosts
+echo $1  k8scp  cp >> /etc/hosts
+echo $2  worker >> /etc/hosts
+echo $3  student >> /etc/hosts
+
+echo ">------------------------------ setup .bashrc ------------------------------<"
+runuser -l vagrant -c 'echo "sudo -i"  >> $HOME/.bashrc'
+
+apt-get install bash-completion -y
+#source <(kubectl completion bash)
+echo "source <(kubectl completion bash)" >> $HOME/.bashrc
+echo "alias k=kubectl" >> $HOME/.bashrc
+echo "complete -F __start_kubectl k" >> $HOME/.bashrc
+
+SCRIPT_Init_OS
+#
+$k8s_install_script = <<-SCRIPT_Install_K8S
+export DEBIAN_FRONTEND=noninteractive
+echo ">------------------------------ Install apps ------------------------------<"
+apt-get install curl apt-transport-https vim git wget gnupg2 software-properties-common apt-transport-https ca-certificates uidmap -y
+echo ">------------------------------ swapoff ------------------------------<"
+swapoff -a
+echo ">------------------------------ modprobe ------------------------------<"
+modprobe overlay
+modprobe br_netfilter
+echo ">------------------------------ sysctl set ------------------------------<"
+echo 'net.bridge.bridge-nf-call-ip6tables = 1' >> /etc/sysctl.d/kubernetes.conf
+echo 'net.bridge.bridge-nf-call-iptables = 1' >> /etc/sysctl.d/kubernetes.conf
+echo 'net.ipv4.ip_forward = 1' >> /etc/sysctl.d/kubernetes.conf
+echo ">------------------------------ sysctl reload ------------------------------<"
+sysctl --system
+echo ">------------------------------ keyrings ------------------------------<"
+mkdir -m 0755 -p /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+$(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+echo ">------------------------------ Install contaierd ------------------------------<"
+apt-get update && apt-get install containerd.io -y
+#systemctl restart packagekit.service ssh.service
+#sed -e '/cri/ s/^#*/#/' -i /etc/containerd/config.toml 
+containerd config default > /etc/containerd/config.toml
+echo "runtime-endpoint: unix:///run/containerd/containerd.sock" > /etc/crictl.yaml
+echo "image-endpoint: unix:///run/containerd/containerd.sock" >> /etc/crictl.yaml
+echo "timeout: 10" >> /etc/crictl.yaml
+echo "debug: false" >> /etc/crictl.yaml
+sed -i 's/3.6/3.9/' /etc/containerd/config.toml
+systemctl restart containerd.service 
+echo ">------------------------------ K8s repo"
+k8s_maj_ver=$(echo $1 | cut -d"." -f1,2 )
+curl -fsSL https://pkgs.k8s.io/core:/stable:/v$k8s_maj_ver/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+echo deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v$k8s_maj_ver/deb/ / | tee /etc/apt/sources.list.d/kubernetes.list
+apt-get update
+echo ">------------------------------ Install K8s ------------------------------<"
+k8s_bin_ver=$(apt-cache madison kubectl | grep $1 | head -n 1 | cut -d"|" -f2 | cut -d" " -f2)
+apt-get install -y kubeadm=$k8s_bin_ver kubelet=$k8s_bin_ver kubectl=$k8s_bin_ver etcd-client
+apt-mark hold kubelet kubeadm kubectl
+SCRIPT_Install_K8S
+
+$k8s_cluster_init_script = <<-SCRIPT_Init_K8S
+echo ">------------------------------ K8s init ------------------------------<"
+echo kubeadm init --apiserver-advertise-address=$1 --pod-network-cidr=10.244.0.0/16
+kubeadm init --apiserver-advertise-address=$1 --pod-network-cidr=10.244.0.0/16 | tee /root/kubeadm-init.out
+echo ">------------------------------ K8s token ------------------------------<"
+kubeadm token create --print-join-command > /vagrant/kubeadm_join.sh
+echo ">------------------------------ K8s .kube/config ------------------------------<"
+export KUBECONFIG=/etc/kubernetes/admin.conf
+echo ">------------------------------ K8s apply ------------------------------<"
+# #kubectl apply -f https://docs.projectcalico.org/manifests/calico.yaml
+# kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.26.3/manifests/calico.yaml
+# #kubectl apply -f https://github.com/weaveworks/weave/releases/download/v2.8.1/weave-daemonset-k8s.yaml
+# #kubectl apply -f https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml
+# #kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.5.1/deploy/static/provider/baremetal/deploy.yaml
+# kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/baremetal/deploy.yaml
+# #kubectl apply -f https://raw.githubusercontent.com/open-policy-agent/gatekeeper/master/deploy/gatekeeper.yaml
+# #echo "openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt | openssl rsa -pubin -outform der 2>/dev/null | openssl dgst -sha256 -hex | sed 's/ˆ.* //'" > /home/student/kube_get_ca.sh
+
+SCRIPT_Init_K8S
+
+$k8s_node_configure_script = <<-SCRIPT_Config_K8S_node
+echo ">------------------------------ Install Falco ------------------------------<"
+curl -s https://falco.org/repo/falcosecurity-packages.asc | gpg --dearmor -o /etc/apt/keyrings/falco.gpg
+echo "deb [signed-by=/etc/apt/keyrings/falco.gpg] https://download.falco.org/packages/deb stable main" | tee -a /etc/apt/sources.list.d/falcosecurity.list
+apt-get update -y
+apt-get install -y dkms make linux-headers-$(uname -r)
+FALCO_FRONTEND=noninteractive apt-get install -y falco
+falco-driver-loader bpf
+systemctl start falco-bpf.service
+SCRIPT_Config_K8S_node
+
+$k8s_worker_init_script = <<-SCRIPT_Init_K8S_worker
+echo ">------------------------------ K8s init ------------------------------<"
+runuser -l vagrant -c 'echo "sudo -i"  >> $HOME/.bashrc'
+echo "      routes:" >> /etc/netplan/50-vagrant.yaml
+echo "      - to: 10.96.0.0/12" >> /etc/netplan/50-vagrant.yaml
+echo "        via: 192.168.56.21" >> /etc/netplan/50-vagrant.yaml
+netplan apply
+sh /vagrant/kubeadm_join.sh
+
+SCRIPT_Init_K8S_worker
+
+$os_post_script = <<-SCRIPT_Post_OS
+echo ">------------------------------ Post OS script ------------------------------<"
+mkdir -p $HOME/.kube
+sudo cp /etc/kubernetes/admin.conf $HOME/.kube/config
+sudo chown $(id -u):$(id -g) $HOME/.kube/config
+
+SCRIPT_Post_OS
+
+$os_student_script = <<-SCRIPT_Student
+echo ">------------------------------ K8s init ------------------------------<"
+useradd -m -s /bin/bash -p sakZ/dnex68yw student
+echo 'student ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/student
+chmod 440 /etc/sudoers.d/student
+runuser -l student -c 'mkdir $HOME/.ssh'
+runuser -l student -c 'chmod go-rwx $HOME/.ssh'
+runuser -l student -c 'sudo cp /vagrant/vagrant_id_rsa $HOME/.ssh/id_rsa'
+runuser -l student -c 'sudo cp /vagrant/vagrant_id_rsa.pub $HOME/.ssh/id_rsa.pub'
+runuser -l student -c 'sudo chown student:student .ssh/id_rsa*'
+
+runuser -l student -c 'mkdir -p $HOME/.kube'
+runuser -l student -c 'sudo cp /vagrant/admin.conf $HOME/.kube/config'
+runuser -l student -c 'sudo chown $(id -u):$(id -g) $HOME/.kube/config'
+apt-get update
+apt-get upgrade -y
+
+runuser -l student -c 'source <(kubectl completion bash)'
+runuser -l student -c 'echo "source <(kubectl completion bash)" >> $HOME/.bashrc'
+runuser -l student -c 'echo "alias k=kubectl" >> $HOME/.bashrc'
+runuser -l student -c 'echo "complete -F __start_kubectl k" >> $HOME/.bashrc'
+runuser -l vagrant -c 'echo "sudo su - student" >> $HOME/.bashrc'
+curl https://baltocdn.com/helm/signing.asc | gpg --dearmor | sudo tee /usr/share/keyrings/helm.gpg > /dev/null
+apt-get install apt-transport-https --yes
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/helm.gpg] https://baltocdn.com/helm/stable/debian/ all main" | sudo tee /etc/apt/sources.list.d/helm-stable-debian.list
+apt-get update
+apt-get install helm
+
+SCRIPT_Student
+
+
+
+
+Vagrant.configure("2") do |config|
+  config.vm.define "cp" do |cp|
+    cp.vm.box = UBU_VER
+    cp.vm.network "private_network", ip: K8S_IP1
+    cp.vm.hostname = "cp"
+    cp.vm.provider "virtualbox" do |vb|
+      vb.memory = 4096
+    end
+    cp.vm.provision "shell", args: K8S_IPs, inline: $os_init_script
+    #cp.vm.provision "shell", args: K8S_VER, inline: $k8s_install_script
+    #cp.vm.provision "shell", args: K8S_CP_IP, inline: $k8s_cluster_init_script
+    #cp.vm.provision "shell", inline: $k8s_node_configure_script
+    #cp.vm.provision "shell", inline: $os_post_script
+  end
+
+  config.vm.define "worker" do |worker|
+    worker.vm.box = UBU_VER
+    worker.vm.network "private_network", ip: K8S_IP2
+    worker.vm.hostname = "worker"
+    worker.vm.provider "virtualbox" do |vb|
+      vb.memory = 4096
+    end
+    worker.vm.provision "shell", args: "#{K8S_VER}", inline: <<-SHELLWORKER
+
+    SHELLWORKER
+  end
+
+  config.vm.define "student" do |student|
+    student.vm.box = UBU_VER
+    student.vm.network "private_network", ip: K8S_IP3
+    student.vm.hostname = "student"
+    student.vm.provision "shell", args: "#{K8S_VER}", inline: <<-SHELLSTUDENT
+
+    SHELLSTUDENT
+  end
+end

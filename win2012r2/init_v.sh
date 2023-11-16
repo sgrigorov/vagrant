@@ -1,0 +1,1 @@
+vagrant init opentable/win-2012r2-standard-amd64-nocm

@@ -1,0 +1,177 @@
+#
+#K8S_VER = ""
+K8S_VER = "1.23.10"
+K8S_VIP = "192.168.56.60"
+K8S_IF = "enp0s8"
+#
+K8S_OS_IMAGE = "generic/oracle8"
+#K8S_OS_IMAGE = "oraclelinux/8"
+#K8S_OS_IMAGE_URL = "https://oracle.github.io/vagrant-projects/boxes/oraclelinux/8.json"
+#
+#
+#
+$install_script = <<-SCRIPT
+echo "-----------------------------run-all---------------------------------------------------"
+adduser opc -p '$6$tifmCx.iEoSukiv0$hVyPF26.790d/FLMwdprUWK4HFygqauSjGJfFFKuhoo.euX4PUK92rz/S2ZwLoQX311ky/4Dn14MmaDyG9fZF/'
+echo 'opc ALL=(ALL) NOPASSWD: ALL'> /etc/sudoers.d/opc
+runuser -l vagrant -c 'echo "sudo su - opc" >> $HOME/.bashrc'
+sed -i "/$HOSTNAME/d" /etc/hosts
+echo '192.168.56.80  olcne-op-node' >> /etc/hosts
+echo '192.168.56.81  olcne-cp1' >> /etc/hosts
+echo '192.168.56.82  olcne-cp2' >> /etc/hosts
+echo '192.168.56.83  olcne-cp3' >> /etc/hosts
+echo '192.168.56.91  olcne-worker1' >> /etc/hosts
+echo '192.168.56.92  olcne-worker2' >> /etc/hosts
+echo '192.168.56.93  olcne-worker3' >> /etc/hosts
+echo '192.168.56.90  olcne-student' >> /etc/hosts
+dnf install oracle-olcne-release-el8 -y
+dnf config-manager --enable ol8_olcne16 ol8_addons ol8_baseos_latest ol8_appstream ol8_kvm_appstream ol8_UEKR7
+dnf config-manager --disable ol8_olcne15 ol8_olcne14 ol8_olcne13 ol8_olcne12
+#dnf config-manager --disable ol8_developer
+sed -e '/swap/ s/^#*/#/' -i /etc/fstab
+swapoff -a
+modprobe br_netfilter
+sh -c 'echo br_netfilter >> /etc/modules-load.d/k8s.conf'
+echo 'net.bridge.bridge-nf-call-ip6tables = 1' >> /etc/sysctl.d/k8s.conf
+echo 'net.bridge.bridge-nf-call-iptables = 1' >> /etc/sysctl.d/k8s.conf
+echo 'net.ipv4.ip_forward = 1' >> /etc/sysctl.d/k8s.conf
+sysctl -p /etc/sysctl.d/k8s.conf
+echo "---------------------------------------------------------------------------------------------------------"
+if [ "$HOSTNAME" = olcne-op-node ]; then
+  echo "-----------------------------run-olcne-op-node---------------------------------------------------"
+  runuser -l opc -c 'ssh-keygen -f $HOME/.ssh/id_rsa -P ""'
+  cp /home/opc/.ssh/id_rsa.pub /vagrant/opc.pub
+  firewall-cmd --add-port=8091/tcp --permanent
+  firewall-cmd --reload
+  dnf install olcnectl olcne-api-server olcne-utils -y
+  systemctl enable olcne-api-server.service 
+  runuser -l opc -c 'cd /etc/olcne && \
+  sudo ./gen-certs-helper.sh \
+  --cert-request-organization-unit "My Company Unit" \
+  --cert-request-organization "My Company" \
+  --cert-request-locality "My Town" \
+  --cert-request-state "My State" \
+  --cert-request-country CA \
+  --cert-request-common-name cloud \
+  --nodes olcne-op-node,olcne-cp1,olcne-worker1,olcne-worker2'
+  find /etc/olcne/ -name node.key -exec chmod 644  {} \\;
+  runuser -l opc -c 'echo "ssh-keyscan -H olcne-op-node >> ~/.ssh/known_hosts" > $HOME/1.add_to_known_hosts.sh'
+  runuser -l opc -c 'echo "ssh-keyscan -H olcne-cp1 >> ~/.ssh/known_hosts" >> $HOME/1.add_to_known_hosts.sh'
+  runuser -l opc -c 'echo "ssh-keyscan -H olcne-worker1 >> ~/.ssh/known_hosts" >> $HOME/1.add_to_known_hosts.sh'
+  runuser -l opc -c 'echo "ssh-keyscan -H olcne-worker2 >> ~/.ssh/known_hosts" >> $HOME/1.add_to_known_hosts.sh'
+  runuser -l opc -c 'echo sudo /etc/olcne/bootstrap-olcne.sh \\\\ > $HOME/2.start_api_server.sh'
+  runuser -l opc -c 'echo --secret-manager-type file \\\\ >> $HOME/2.start_api_server.sh'
+  runuser -l opc -c 'echo --olcne-node-cert-path /etc/olcne/configs/certificates/production/node.cert \\\\ >> $HOME/2.start_api_server.sh'
+  runuser -l opc -c 'echo --olcne-ca-path /etc/olcne/configs/certificates/production/ca.cert \\\\ >> $HOME/2.start_api_server.sh'
+  runuser -l opc -c 'echo --olcne-node-key-path /etc/olcne/configs/certificates/production/node.key \\\\ >> $HOME/2.start_api_server.sh'
+  runuser -l opc -c 'echo --olcne-component api-server >> $HOME/2.start_api_server.sh'
+  runuser -l opc -c 'echo ssh olcne-cp1 sh ~/1.start_agent.sh > $HOME/3.start_agents.sh'
+  runuser -l opc -c 'echo ssh olcne-worker1 sh ~/1.start_agent.sh >> $HOME/3.start_agents.sh'
+  runuser -l opc -c 'echo ssh olcne-worker2 sh ~/1.start_agent.sh >> $HOME/3.start_agents.sh'
+  runuser -l opc -c 'echo olcnectl environment create \\\\ > $HOME/4.create_environment.sh'
+  runuser -l opc -c 'echo --api-server 127.0.0.1:8091 \\\\ >> $HOME/4.create_environment.sh'
+  runuser -l opc -c 'echo --environment-name myenvironment \\\\ >> $HOME/4.create_environment.sh'
+  runuser -l opc -c 'echo --secret-manager-type file \\\\ >> $HOME/4.create_environment.sh'
+  runuser -l opc -c 'echo --olcne-node-cert-path /etc/olcne/configs/certificates/production/node.cert \\\\ >> $HOME/4.create_environment.sh'
+  runuser -l opc -c 'echo --olcne-ca-path /etc/olcne/configs/certificates/production/ca.cert \\\\ >> $HOME/4.create_environment.sh'
+  runuser -l opc -c 'echo --olcne-node-key-path /etc/olcne/configs/certificates/production/node.key \\\\ >> $HOME/4.create_environment.sh'
+  runuser -l opc -c 'echo --update-config >> $HOME/4.create_environment.sh'
+  runuser -l opc -c 'echo olcnectl module create \\\\ > $HOME/5.create_module.sh'
+  runuser -l opc -c 'echo --environment-name myenvironment \\\\ >> $HOME/5.create_module.sh'
+  runuser -l opc -c 'echo --module kubernetes \\\\ >> $HOME/5.create_module.sh'
+  runuser -l opc -c 'echo --name mycluster \\\\ >> $HOME/5.create_module.sh'
+  runuser -l opc -c 'echo --container-registry container-registry.oracle.com/olcne \\\\ >> $HOME/5.create_module.sh'
+  runuser -l opc -c 'echo --control-plane-nodes olcne-cp1:8090 \\\\ >> $HOME/5.create_module.sh'
+  runuser -l opc -c 'echo --worker-nodes olcne-worker1:8090,olcne-worker2:8090 \\\\ >> $HOME/5.create_module.sh'
+  runuser -l opc -c 'echo --selinux enforcing \\\\ >> $HOME/5.create_module.sh'
+  runuser -l opc -c 'echo --restrict-service-externalip-tls-cert /etc/olcne/configs/certificates/production/node.cert \\\\ >> $HOME/5.create_module.sh'
+  runuser -l opc -c 'echo --restrict-service-externalip-ca-cert /etc/olcne/configs/certificates/production/ca.cert \\\\ >> $HOME/5.create_module.sh'
+  runuser -l opc -c 'echo --restrict-service-externalip-tls-key /etc/olcne/configs/certificates/production/node.key \\\\ >> $HOME/5.create_module.sh'
+  runuser -l opc -c 'echo olcnectl module validate --environment-name myenvironment --name mycluster > $HOME/6.validate_module.sh'
+  runuser -l opc -c 'echo olcnectl module install --environment-name myenvironment --name mycluster > $HOME/7.install_module.sh'
+  runuser -l opc -c 'echo olcnectl module report --environment-name myenvironment --name mycluster --children > $HOME/8.report_module.sh'
+  echo "---------------------------------------------------------------------------------------------------------"
+else
+  if [ "$HOSTNAME" == olcne-cp* ]; then
+    echo "-----------------------------run-olcne-cpX---------------------------------------------------"
+    firewall-cmd --zone=trusted --add-interface=cni0 --permanent
+    firewall-cmd --add-port=8090/tcp --permanent
+    firewall-cmd --add-port=10250/tcp --permanent
+    firewall-cmd --add-port=10255/tcp --permanent
+    firewall-cmd --add-port=8472/udp --permanent
+    firewall-cmd --add-port=6443/tcp --permanent
+    firewall-cmd --add-port=10251/tcp --permanent
+    firewall-cmd --add-port=10252/tcp --permanent
+    firewall-cmd --add-port=2379/tcp --permanent
+    firewall-cmd --add-port=2380/tcp --permanent
+    firewall-cmd --reload
+    echo "---------------------------------------------------------------------------------------------------------"
+  else
+    echo "-----------------------------run-olcne-workerX---------------------------------------------------"
+    firewall-cmd --zone=trusted --add-interface=cni0 --permanent
+    firewall-cmd --add-port=8090/tcp --permanent
+    firewall-cmd --add-port=10250/tcp --permanent
+    firewall-cmd --add-port=10255/tcp --permanent
+    firewall-cmd --add-port=8472/udp --permanent
+    firewall-cmd --reload
+    echo "---------------------------------------------------------------------------------------------------------"
+  fi
+  echo "-----------------------------run-olcne-cpX-&-olcne-workerX-------------------------------------------------"
+  runuser -l opc -c 'mkdir -m 700 $HOME/.ssh'
+  dnf install olcne-agent olcne-utils -y
+  systemctl enable olcne-agent.service 
+  runuser -l opc -c 'echo sudo /etc/olcne/bootstrap-olcne.sh \\\\ > $HOME/1.start_agent.sh'
+  runuser -l opc -c 'echo --secret-manager-type file \\\\ >> $HOME/1.start_agent.sh'
+  runuser -l opc -c 'echo --olcne-node-cert-path /etc/olcne/configs/certificates/production/node.cert \\\\ >> $HOME/1.start_agent.sh'
+  runuser -l opc -c 'echo --olcne-ca-path /etc/olcne/configs/certificates/production/ca.cert \\\\ >> $HOME/1.start_agent.sh'
+  runuser -l opc -c 'echo --olcne-node-key-path /etc/olcne/configs/certificates/production/node.key \\\\ >> $HOME/1.start_agent.sh'
+  runuser -l opc -c 'echo --olcne-component agent >> $HOME/1.start_agent.sh'
+  echo "---------------------------------------------------------------------------------------------------------"
+fi
+runuser -l opc -c 'install -m 600 /vagrant/opc.pub $HOME/.ssh/authorized_keys'
+SCRIPT
+#
+#
+#
+Vagrant.configure("2") do |config|
+  config.vm.define "olcne-op-node" do |node|
+    node.vm.box = "#{K8S_OS_IMAGE}"
+    node.vm.network "private_network", ip: "192.168.56.80"
+    node.vm.hostname = "olcne-op-node"
+    node.vm.synced_folder ".", "/vagrant"
+    node.vm.provider "virtualbox" do |vb|
+      vb.memory = 2048
+    end
+    node.vm.provision "shell", args: ["olcne-op-node","#{K8S_VER}","#{K8S_VIP}","#{K8S_IF}"],  inline: $install_script
+  end
+
+  (1..1).each do |i|
+    config.vm.define "olcne-cp#{i}" do |node|
+      node.vm.box = "#{K8S_OS_IMAGE}"
+      #node.vm.box_url = "#{K8S_OS_IMAGE_URL}"
+      node.vm.network "private_network", ip: "192.168.56.8#{i}"
+      node.vm.hostname = "olcne-cp#{i}"
+      node.vm.synced_folder ".", "/vagrant"
+      node.vm.provider "virtualbox" do |vb|
+        vb.memory = 2048
+      end
+      node.vm.provision "shell", args: ["olcne-cp#{i}","#{K8S_VER}","#{K8S_VIP}","#{K8S_IF}"],  inline: $install_script
+    end
+  end
+
+  (1..2).each do |i|
+    config.vm.define "olcne-worker#{i}" do |node|
+      node.vm.box = "#{K8S_OS_IMAGE}"
+      #node.vm.box_url = "#{K8S_OS_IMAGE_URL}"
+      node.vm.network "private_network", ip: "192.168.56.9#{i}"
+      node.vm.hostname = "olcne-worker#{i}"
+      node.vm.synced_folder ".", "/vagrant"
+      config.vm.provider "virtualbox" do |vb|
+        vb.memory = 2048
+      end
+      node.vm.provision "shell", args: ["olcne-worker#{i}","#{K8S_VER}","#{K8S_VIP}","#{K8S_IF}"],  inline: $install_script
+    end
+  end
+
+end
+

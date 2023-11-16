@@ -1,0 +1,267 @@
+#
+# K8S_VER = ""
+K8S_VER = "1.26.9"
+K8S_VIP = "192.168.56.30"
+UBU_VER = "ubuntu/focal64" # 20.04
+# UBU_VER = "ubuntu/jammy64" # 22.04
+#
+#
+# Calculated Variables
+K8S_IP_A = K8S_VIP.chop
+K8S_IP_B = K8S_VIP.slice(-1)
+K8S_CP_IP1 = K8S_IP_A + K8S_IP_B.succ
+K8S_CP_IP2 = K8S_IP_A + K8S_IP_B.succ.succ
+K8S_CP_IP3 = K8S_IP_A + K8S_IP_B.succ.succ.succ
+K8S_W_IP1 = K8S_IP_A + K8S_IP_B.succ.succ.succ.succ
+K8S_W_IP2 = K8S_IP_A + K8S_IP_B.succ.succ.succ.succ.succ
+K8S_W_IP3 = K8S_IP_A + K8S_IP_B.succ.succ.succ.succ.succ.succ
+K8S_STUDENT = K8S_IP_A + K8S_IP_B.succ.succ.succ.succ.succ.succ.succ
+
+K8S_CP_IPs = Array[K8S_CP_IP1, K8S_CP_IP2, K8S_CP_IP3]
+K8S_W_IPs = Array[K8S_W_IP1, K8S_W_IP2, K8S_W_IP3]
+K8S_IPs = Array[K8S_VIP, K8S_CP_IP1, K8S_CP_IP2, K8S_CP_IP3, K8S_W_IP1, K8S_W_IP2, K8S_W_IP3, K8S_STUDENT]
+
+
+K8S_IF = "enp0s8"
+#
+#
+$os_init_script = <<-SCRIPT_Init_OS
+echo ">------------------------------ RSA keys ------------------------------<"
+if [ ! -f "/vagrant/vagrant_id_rsa.pub"  ] ||  [ ! -f "/vagrant/vagrant_id_rsa" ]
+then
+  ssh-keygen -f $HOME/.ssh/id_rsa -P ""
+  cp $HOME/.ssh/id_rsa /vagrant/vagrant_id_rsa
+  cp $HOME/.ssh/id_rsa.pub /vagrant/vagrant_id_rsa.pub
+else
+  cp /vagrant/vagrant_id_rsa $HOME/.ssh/id_rsa
+  cp /vagrant/vagrant_id_rsa.pub $HOME/.ssh/id_rsa.pub
+fi
+cp $HOME/.ssh/id_rsa.pub $HOME/.ssh/authorized_keys
+
+echo ">------------------------------ OS update ------------------------------<"
+export DEBIAN_FRONTEND=noninteractive
+apt-get update && apt-get upgrade -y
+
+echo ">------------------------------ setup /etc/hosts ------------------------------<"
+sed -i "/$HOSTNAME/d" /etc/hosts
+echo $1  k8scp >> /etc/hosts
+echo $2  cp1 >> /etc/hosts
+echo $3  cp2 >> /etc/hosts
+echo $4  cp3 >> /etc/hosts
+echo $5  worker1 >> /etc/hosts
+echo $6  worker2 >> /etc/hosts
+echo $7  worker3 >> /etc/hosts
+echo $8  student >> /etc/hosts
+
+echo ">------------------------------ setup .bashrc ------------------------------<"
+runuser -l vagrant -c 'echo "sudo -i"  >> $HOME/.bashrc'
+
+apt-get install bash-completion -y
+#source <(kubectl completion bash)
+echo "source <(kubectl completion bash)" >> $HOME/.bashrc
+echo "alias k=kubectl" >> $HOME/.bashrc
+echo "complete -F __start_kubectl k" >> $HOME/.bashrc
+
+SCRIPT_Init_OS
+#
+#
+$k8s_install_script = <<-SCRIPT_Install_K8S
+export DEBIAN_FRONTEND=noninteractive
+echo ">------------------------------ Install apps ------------------------------<"
+apt-get install curl vim git wget gnupg2 software-properties-common apt-transport-https ca-certificates uidmap -y
+echo ">------------------------------ swapoff ------------------------------<"
+swapoff -a
+echo ">------------------------------ modprobe ------------------------------<"
+modprobe overlay
+modprobe br_netfilter
+echo ">------------------------------ sysctl set ------------------------------<"
+echo 'net.bridge.bridge-nf-call-ip6tables = 1' >> /etc/sysctl.d/kubernetes.conf
+echo 'net.bridge.bridge-nf-call-iptables = 1' >> /etc/sysctl.d/kubernetes.conf
+echo 'net.ipv4.ip_forward = 1' >> /etc/sysctl.d/kubernetes.conf
+echo ">------------------------------ sysctl reload ------------------------------<"
+sysctl --system
+echo ">------------------------------ Docker repo ------------------------------<"
+mkdir -m 0755 -p /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+$(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+echo ">------------------------------ Install contaierd ------------------------------<"
+apt-get update && apt-get install containerd.io -y
+containerd config default > /etc/containerd/config.toml
+echo "runtime-endpoint: unix:///run/containerd/containerd.sock" > /etc/crictl.yaml
+echo "image-endpoint: unix:///run/containerd/containerd.sock" >> /etc/crictl.yaml
+echo "timeout: 10" >> /etc/crictl.yaml
+echo "debug: false" >> /etc/crictl.yaml
+sed -i 's/3.6/3.9/' /etc/containerd/config.toml
+sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
+systemctl restart containerd.service 
+echo ">------------------------------ K8s repo ------------------------------<"
+if [ -z "$1" ]
+  then 
+    k8s_ver=$(curl -s https://cdn.dl.k8s.io/release/stable.txt | cut -c 2- )
+  else
+    k8s_ver=$1
+fi
+echo "K8S version: $k8s_ver"
+k8s_maj_ver=$(echo $k8s_ver | cut -d"." -f1,2 )
+curl -fsSL https://pkgs.k8s.io/core:/stable:/v$k8s_maj_ver/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+echo deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v$k8s_maj_ver/deb/ / | tee /etc/apt/sources.list.d/kubernetes.list
+apt-get update
+
+echo ">------------------------------ Install K8s ------------------------------<"
+k8s_bin_ver=$(apt-cache madison kubectl | grep $k8s_ver- | head -n 1 | cut -d"|" -f2 | cut -d" " -f2)
+echo "k8s_bin_ver: $k8s_bin_ver"
+apt-get install -y kubeadm=$k8s_bin_ver kubelet=$k8s_bin_ver kubectl=$k8s_bin_ver etcd-client
+apt-mark hold kubelet kubeadm kubectl
+
+SCRIPT_Install_K8S
+#
+#
+#
+# https://github.com/kubernetes/kubeadm/blob/main/docs/ha-considerations.md#options-for-software-load-balancing
+#
+#
+#
+#
+#
+$install_script = <<-SCRIPT
+echo "---------------------------------------------------------------------------------"
+echo " 1: " $1
+echo " 2: " $2
+echo " 3: " $3
+echo " 4: " $4
+echo "---------------------------------------------------------------------------------"
+echo "script_all_1"
+echo "---------------------------------------------------------------------------------"
+
+echo "      routes:" >> /etc/netplan/50-vagrant.yaml
+echo "      - to: 10.96.0.0/12" >> /etc/netplan/50-vagrant.yaml
+echo "        via: 192.168.56.31" >> /etc/netplan/50-vagrant.yaml
+netplan apply
+
+shopt -s expand_aliases
+KVVERSION=$(curl -sL https://api.github.com/repos/kube-vip/kube-vip/releases | jq -r ".[0].name")
+alias kube-vip="ctr image pull ghcr.io/kube-vip/kube-vip:$KVVERSION; ctr run --rm --net-host ghcr.io/kube-vip/kube-vip:$KVVERSION vip /kube-vip"
+echo 'shopt -s expand_aliases' > /root/kube-vip.sh
+echo 'KVVERSION=$(curl -sL https://api.github.com/repos/kube-vip/kube-vip/releases | jq -r ".[0].name")' >> /root/kube-vip.sh
+echo 'alias kube-vip="ctr image pull ghcr.io/kube-vip/kube-vip:$KVVERSION; ctr run --rm --net-host ghcr.io/kube-vip/kube-vip:$KVVERSION vip /kube-vip"' >> /root/kube-vip.sh
+echo "kube-vip manifest daemonset --interface $4 --address $3 --inCluster --taint --controlplane --services --arp --leaderElection | kubectl apply -f - " >> /root/kube-vip.sh
+
+if [ $1 != "student" ]; then 
+  echo "---------------------------------------------------------------------------------"
+  echo "script_cluster"
+  echo "---------------------------------------------------------------------------------"
+
+  if [ $1 = "cp1" ]; then 
+    echo "---------------------------------------------------------------------------------"
+    echo "script_first_node"
+    echo "---------------------------------------------------------------------------------"
+    sed -i 's/192.168.56.30/192.168.56.31/' /etc/hosts
+    kubeadm init --apiserver-advertise-address=192.168.56.31 --pod-network-cidr=10.244.0.0/16 --apiserver-cert-extra-sans k8svip,192.168.56.30 --control-plane-endpoint k8svip:6443 --upload-certs --kubernetes-version $2 | tee /root/kubeadm-cp1-init.out
+    export KUBECONFIG=/etc/kubernetes/admin.conf
+    kubectl apply -f https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml
+    kubectl apply -f https://kube-vip.io/manifests/rbac.yaml
+    kubeadm token create --print-join-command > /vagrant/kubeadm_join_worker.sh
+    kubeadm token create --print-join-command | tr -d '\n' > /vagrant/kubeadm_join_cp.sh
+    echo -n ' --apiserver-advertise-address $(hostname -I | cut -d " " -f 2)  --control-plane --certificate-key '  >> /vagrant/kubeadm_join_cp.sh
+    kubeadm init phase upload-certs --upload-certs | tail -n 1 >> /vagrant/kubeadm_join_cp.sh
+    kubectl get all -A
+    #KVVERSION=$(curl -sL https://api.github.com/repos/kube-vip/kube-vip/releases | jq -r ".[0].name")
+    #echo $KVVERSION
+    #alias kube-vip="ctr image pull ghcr.io/kube-vip/kube-vip:$KVVERSION; ctr run --rm --net-host ghcr.io/kube-vip/kube-vip:$KVVERSION vip /kube-vip"
+    #alias
+    #echo "kube-vip manifest daemonset --interface $4 --address $3 --inCluster --taint --controlplane --services --arp --leaderElection | kubectl apply -f - "
+    #sleep 120
+    #kubectl get all -A
+    #kube-vip manifest daemonset --interface $4 --address $3 --inCluster --taint --controlplane --services --arp --leaderElection | kubectl apply -f -
+    bash /root/kube-vip.sh
+    sudo cp /etc/kubernetes/admin.conf /vagrant
+    sed -i 's/192.168.56.31  k8svip/192.168.56.30  k8svip/' /etc/hosts
+  elif [ $1 = "cp2" -o $1 = "cp3" ]; then 
+    echo "---------------------------------------------------------------------------------"
+    echo "script_next_cluster_node"
+    echo "---------------------------------------------------------------------------------"
+    cp /vagrant/admin.conf /etc/kubernetes
+    export KUBECONFIG=/etc/kubernetes/admin.conf
+    sh /vagrant/kubeadm_join_cp.sh
+  elif [[ $1 == "worker"* ]]; then 
+    echo "---------------------------------------------------------------------------------"
+    echo "script_worker"
+    echo "---------------------------------------------------------------------------------"
+    cp /vagrant/admin.conf /etc/kubernetes
+    export KUBECONFIG=/etc/kubernetes/admin.conf
+    sh /vagrant/kubeadm_join_worker.sh
+  fi
+else 
+  echo "---------------------------------------------------------------------------------"
+  echo "script_student"
+  echo "---------------------------------------------------------------------------------"
+  useradd -m -s /bin/bash -p sakZ/dnex68yw student
+  echo 'student ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/student
+  chmod 440 /etc/sudoers.d/student
+  mkdir -p $HOME/.kube
+  runuser -l student -c 'mkdir -p $HOME/.kube'
+  runuser -l student -c 'mkdir -p $HOME/.kube'
+  runuser -l student -c 'sudo cp /etc/kubernetes/admin.conf $HOME/.kube/config'
+  runuser -l student -c 'sudo chown $(id -u):$(id -g) $HOME/.kube/config'
+  #
+  runuser -l student -c 'echo "source <(kubectl completion bash)" >> $HOME/.bashrc'
+  runuser -l student -c 'echo "source <(kubeadm completion bash)" >> $HOME/.bashrc'
+  runuser -l student -c 'echo "alias k=kubectl" >> $HOME/.bashrc'
+  runuser -l student -c 'echo "complete -F __start_kubectl k" >> $HOME/.bashrc'
+  runuser -l vagrant -c 'echo "sudo su - student" >> $HOME/.bashrc'
+fi
+echo "---------------------------------------------------------------------------------"
+echo "script_all_2"
+echo "---------------------------------------------------------------------------------"
+echo "source <(kubectl completion bash)" >> $HOME/.bashrc
+echo "source <(kubeadm completion bash)" >> $HOME/.bashrc
+echo "alias k=kubectl" >> $HOME/.bashrc
+echo "complete -F __start_kubectl k" >> $HOME/.bashrc
+SCRIPT
+#
+#
+#
+Vagrant.configure("2") do |config|
+  (1..3).each do |i|
+    config.vm.define "cp#{i}" do |node|
+      node.vm.box = UBU_VER
+      node.vm.network "private_network", ip: "192.168.56.3#{i}"
+      node.vm.hostname = "cp#{i}"
+      node.vm.provider "virtualbox" do |vb|
+        vb.memory = 2048
+      end
+      node.vm.provision "shell", args: K8S_IPs, inline: $os_init_script
+      #node.vm.provision "shell", args: K8S_VER, inline: $k8s_install_script
+      #node.vm.provision "shell", args: K8S_VIP, inline: $k8s_cluster_init_script
+      #node.vm.provision "shell", inline: $k8s_node_configure_script
+      #node.vm.provision "shell", args: ["cp#{i}","#{K8S_VER}","#{K8S_VIP}","#{K8S_IF}"],  inline: $install_script
+    end
+  end
+
+  (1..3).each do |i|
+    config.vm.define "worker#{i}" do |node|
+      node.vm.box = "#{UBU_VER}"
+      node.vm.network "private_network", ip: "192.168.56.4#{i}"
+      node.vm.hostname = "worker#{i}"
+
+      config.vm.provider "virtualbox" do |vb|
+        vb.memory = 2048
+      end
+      node.vm.provision "shell", args: K8S_IPs, inline: $os_init_script
+      #node.vm.provision "shell", args: K8S_VER, inline: $k8s_install_script
+      #node.vm.provision "shell", args: K8S_VIP, inline: $k8s_worker_init_script
+      #node.vm.provision "shell", inline: $k8s_node_configure_script
+      #node.vm.provision "shell", args: ["worker#{i}","#{K8S_VER}","#{K8S_VIP}","#{K8S_IF}"],  inline: $install_script
+    end
+  end
+
+  config.vm.define "student" do |student|
+    student.vm.box = "#{UBU_VER}"
+    student.vm.network "private_network", ip: "192.168.56.50"
+    student.vm.hostname = "student"
+    student.vm.provision "shell", args: K8S_IPs, inline: $os_init_script
+    #student.vm.provision "shell", args: K8S_VER, inline: $k8s_student_init_script
+    #student.vm.provision "shell", args: ["student","#{K8S_VER}","#{K8S_VIP}","#{K8S_IF}"],  inline: $install_script
+  end
+end
