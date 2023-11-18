@@ -2,8 +2,8 @@
 # K8S_VER = ""
 K8S_VER = "1.26.9"
 K8S_VIP = "192.168.56.30"
-UBU_VER = "ubuntu/focal64" # 20.04
-# UBU_VER = "ubuntu/jammy64" # 22.04
+# UBU_VER = "ubuntu/focal64" # 20.04
+UBU_VER = "ubuntu/jammy64" # 22.04
 #
 #
 # Calculated Variables
