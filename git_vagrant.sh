@@ -7,5 +7,5 @@ FILE='.git/config'
 grep -qF -- "$GITLAB" "$FILE" || sed -i "/remote \"origin\"/a \	$GITLAB" "$FILE"
 grep -qF -- "$GITHUB" "$FILE" || sed -i "/remote \"origin\"/a \	$GITHUB" "$FILE"
 
-git config commit.template ~/scripts/terraform/.gitmessage
-echo " My commit  message" > ~/scripts/terraform/.gitmessage
+git config commit.template ~/scripts/vagrant/.gitmessage
+echo " My commit  message" > ~/scripts/vagrant/.gitmessage
