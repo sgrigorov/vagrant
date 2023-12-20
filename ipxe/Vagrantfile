@@ -3,13 +3,18 @@
 
 OS_IMAGE = "generic/oracle8"
 
+$my_script = <<-my_script
+curl -s -L https://gitlab.com/sgrigorov/ipxe/-/raw/master/files/create.kpxe.and.efi.gitlab.sh | bash
+/bin/cp undionly.gitlab2.kpxe ipxe.gitlab2.efi /vagrant
+my_script
 
 Vagrant.configure("2") do |config|
 
   config.vm.box = OS_IMAGE
   config.vm.synced_folder ".", "/vagrant"
-  config.vm.provision "shell", inline: <<-SHELL
-    curl -s -L https://gitlab.com/sgrigorov/ipxe/-/raw/master/files/create.kpxe.and.efi.gitlab.sh | bash
-    /bin/cp undionly.gitlab2.kpxe ipxe.gitlab2.efi /vagrant 
-  SHELL
+  # config.vm.provision "shell", inline: <<-SHELL
+  #   curl -s -L https://gitlab.com/sgrigorov/ipxe/-/raw/master/files/create.kpxe.and.efi.gitlab.sh | bash
+  #   /bin/cp undionly.gitlab2.kpxe ipxe.gitlab2.efi /vagrant 
+  # SHELL
+  config.vm.provision "shell", inline: $my_script
 end
