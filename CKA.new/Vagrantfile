@@ -24,6 +24,7 @@ then
   cp $HOME/.ssh/id_rsa.pub /vagrant/vagrant_id_rsa.pub
 else
   cp /vagrant/vagrant_id_rsa $HOME/.ssh/id_rsa
+  chmod 600 $HOME/.ssh/id_rsa
   cp /vagrant/vagrant_id_rsa.pub $HOME/.ssh/id_rsa.pub
 fi
 cp $HOME/.ssh/id_rsa.pub $HOME/.ssh/authorized_keys
@@ -160,6 +161,7 @@ chmod 440 /etc/sudoers.d/student
 runuser -l student -c 'mkdir $HOME/.ssh'
 runuser -l student -c 'chmod go-rwx $HOME/.ssh'
 runuser -l student -c 'sudo cp /vagrant/vagrant_id_rsa $HOME/.ssh/id_rsa'
+runuser -l student -c 'chmod 600 $HOME/.ssh/id_rsa'
 runuser -l student -c 'sudo cp /vagrant/vagrant_id_rsa.pub $HOME/.ssh/id_rsa.pub'
 runuser -l student -c 'sudo chown student:student .ssh/id_rsa*'
 

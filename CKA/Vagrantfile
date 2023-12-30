@@ -24,6 +24,7 @@ then
   cp $HOME/.ssh/id_rsa.pub /vagrant/vagrant_id_rsa.pub
 else
   cp /vagrant/vagrant_id_rsa $HOME/.ssh/id_rsa
+  chmod 600 $HOME/.ssh/id_rsa
   cp /vagrant/vagrant_id_rsa.pub $HOME/.ssh/id_rsa.pub
 fi
 cp $HOME/.ssh/id_rsa.pub $HOME/.ssh/authorized_keys
