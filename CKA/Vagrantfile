@@ -189,6 +189,7 @@ apt-mark hold kubeadm kubectl
 runuser -l student -c 'mkdir -p $HOME/.kube'
 runuser -l student -c 'sudo cp /vagrant/admin.conf $HOME/.kube/config'
 runuser -l student -c 'sudo chown $(id -u):$(id -g) $HOME/.kube/config'
+runuser -l student -c 'sudo chmod 600 $HOME/.kube/config'
 runuser -l student -c 'echo "source <(kubectl completion bash)" >> $HOME/.bashrc'
 runuser -l student -c 'echo "alias k=kubectl" >> $HOME/.bashrc'
 runuser -l student -c 'echo "complete -F __start_kubectl k" >> $HOME/.bashrc'
