@@ -4,5 +4,9 @@
 **/kubeadm_join.sh
 **/vagrant_id_rsa
 **/vagrant_id_rsa.pub
+**/*.ipxe
+**/*.kpxe
+**/*.iso
+**/*.efi
 # Log files (if you are creating logs in debug mode, uncomment this)
 # *.log
