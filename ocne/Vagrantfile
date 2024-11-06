@@ -4,12 +4,37 @@ K8S_VER = "1.23.10"
 K8S_VIP = "192.168.56.60"
 K8S_IF = "enp0s8"
 #
-K8S_OS_IMAGE = "generic/oracle8"
-#K8S_OS_IMAGE = "oraclelinux/8"
-#K8S_OS_IMAGE_URL = "https://oracle.github.io/vagrant-projects/boxes/oraclelinux/8.json"
+# K8S_OS_IMAGE = "generic/oracle8"
+# K8S_OS_IMAGE = "oraclelinux/8"
+K8S_OS_IMAGE = "oraclelinux/9"
+K8S_OS_IMAGE_URL = "https://oracle.github.io/vagrant-projects/boxes/oraclelinux/9.json"
+#
+# Oracle Linux 9: https://oracle.github.io/vagrant-projects/boxes/oraclelinux/9.json
+# Oracle Linux 9 with Btrfs root filesystem: https://oracle.github.io/vagrant-projects/boxes/oraclelinux/9-btrfs.json
+# Oracle Linux 8: https://oracle.github.io/vagrant-projects/boxes/oraclelinux/8.json
+# Oracle Linux 8 with Btrfs root filesystem: https://oracle.github.io/vagrant-projects/boxes/oraclelinux/8-btrfs.json
 #
 #
+$install_script1 = <<-SCRIPT1
+sudo dnf install -y oracle-ocne-release-el9
+sudo dnf config-manager --enable ol9_ocne
+sudo dnf install -y ocne
+sudo dnf remove -y libvirt qemu-kvm edk2
+sudo dnf config-manager --enable ol9_kvm_utils
+sudo dnf group install -y "Virtualization Host"
+sudo dnf install -y virt-install virt-viewer
+for drv in qemu network nodedev nwfilter secret storage interface proxy
+  do
+   sudo systemctl enable virt${drv}d.service
+   sudo systemctl enable virt${drv}d{,-ro,-admin}.socket
+   sudo systemctl start virt${drv}d{,-ro,-admin}.socket
+  done
+# virt-host-validate qemu
+sudo usermod -a -G libvirt,qemu $USER
 #
+ocne image create --type ostree
+#
+SCRIPT1
 $install_script = <<-SCRIPT
 echo "-----------------------------run-all---------------------------------------------------"
 adduser opc -p '$6$tifmCx.iEoSukiv0$hVyPF26.790d/FLMwdprUWK4HFygqauSjGJfFFKuhoo.euX4PUK92rz/S2ZwLoQX311ky/4Dn14MmaDyG9fZF/'
@@ -44,7 +69,7 @@ if [ "$HOSTNAME" = olcne-op-node ]; then
   firewall-cmd --add-port=8091/tcp --permanent
   firewall-cmd --reload
   dnf install olcnectl olcne-api-server olcne-utils -y
-  systemctl enable olcne-api-server.service 
+  systemctl enable olcne-api-server.service
   runuser -l opc -c 'cd /etc/olcne && \
   sudo ./gen-certs-helper.sh \
   --cert-request-organization-unit "My Company Unit" \
@@ -119,7 +144,7 @@ else
   echo "-----------------------------run-olcne-cpX-&-olcne-workerX-------------------------------------------------"
   runuser -l opc -c 'mkdir -m 700 $HOME/.ssh'
   dnf install olcne-agent olcne-utils -y
-  systemctl enable olcne-agent.service 
+  systemctl enable olcne-agent.service
   runuser -l opc -c 'echo sudo /etc/olcne/bootstrap-olcne.sh \\\\ > $HOME/1.start_agent.sh'
   runuser -l opc -c 'echo --secret-manager-type file \\\\ >> $HOME/1.start_agent.sh'
   runuser -l opc -c 'echo --olcne-node-cert-path /etc/olcne/configs/certificates/production/node.cert \\\\ >> $HOME/1.start_agent.sh'
@@ -136,19 +161,22 @@ SCRIPT
 Vagrant.configure("2") do |config|
   config.vm.define "olcne-op-node" do |node|
     node.vm.box = "#{K8S_OS_IMAGE}"
+    node.vm.box_url = "#{K8S_OS_IMAGE_URL}"
     node.vm.network "private_network", ip: "192.168.56.80"
     node.vm.hostname = "olcne-op-node"
     node.vm.synced_folder ".", "/vagrant"
     node.vm.provider "virtualbox" do |vb|
-      vb.memory = 2048
+      vb.memory = 4096
+      vb.cpus = 2
+      vb.customize ['modifyvm', :id, '--nested-hw-virt', 'on']
     end
-    node.vm.provision "shell", args: ["olcne-op-node","#{K8S_VER}","#{K8S_VIP}","#{K8S_IF}"],  inline: $install_script
+    node.vm.provision "shell", args: ["olcne-op-node","#{K8S_VER}","#{K8S_VIP}","#{K8S_IF}"],  inline: $install_script1
   end
 
   (1..1).each do |i|
     config.vm.define "olcne-cp#{i}" do |node|
       node.vm.box = "#{K8S_OS_IMAGE}"
-      #node.vm.box_url = "#{K8S_OS_IMAGE_URL}"
+      node.vm.box_url = "#{K8S_OS_IMAGE_URL}"
       node.vm.network "private_network", ip: "192.168.56.8#{i}"
       node.vm.hostname = "olcne-cp#{i}"
       node.vm.synced_folder ".", "/vagrant"
@@ -174,4 +202,3 @@ Vagrant.configure("2") do |config|
   end
 
 end
-
