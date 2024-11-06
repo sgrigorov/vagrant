@@ -32,7 +32,7 @@ for drv in qemu network nodedev nwfilter secret storage interface proxy
 # virt-host-validate qemu
 sudo usermod -a -G libvirt,qemu $USER
 #
-ocne image create --type ostree
+#ocne image create --type ostree
 #
 SCRIPT1
 $install_script = <<-SCRIPT
@@ -166,8 +166,8 @@ Vagrant.configure("2") do |config|
     node.vm.hostname = "olcne-op-node"
     node.vm.synced_folder ".", "/vagrant"
     node.vm.provider "virtualbox" do |vb|
-      vb.memory = 4096
-      vb.cpus = 2
+      vb.memory = 16000
+      vb.cpus = 4
       vb.customize ['modifyvm', :id, '--nested-hw-virt', 'on']
     end
     node.vm.provision "shell", args: ["olcne-op-node","#{K8S_VER}","#{K8S_VIP}","#{K8S_IF}"],  inline: $install_script1
