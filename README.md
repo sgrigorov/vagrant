@@ -1,6 +1,6 @@
 # Vagrant
 
-TEST
+
 
 ## Getting started
 
