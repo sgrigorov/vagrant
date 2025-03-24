@@ -6,14 +6,15 @@ cat <<EOF >>/etc/NetworkManager/conf.d/rke2-canal.conf
 unmanaged-devices=interface-name:flannel*;interface-name:cali*;interface-name:tunl*;interface-name:vxlan.calico;interface-name:vxlan-v6.calico;interface-name:wireguard.cali;interface-name:wg-v6.cali
 EOF
 systemctl reload NetworkManager
-#systemctl disable --now firewalld.service
 firewall-cmd --add-port={6443,9345,10250,2379,2380,2381,30000-32767}/tcp --permanent
+# CNI - Canal
+firewall-cmd --add-port={9099/tcp,{8472,51820,51821}/udp} --permanent
 firewall-cmd --reload
 
 
 curl -sfL https://get.rke2.io | sh -
 systemctl enable --now rke2-server.service
-echo 'export PATH=/var/lib/rancher/rke2/bin:$PATH' >> .bashrc
+echo 'export PATH=/var/lib/rancher/rke2/bin:\$PATH' >> .bashrc
 echo 'export KUBECONFIG=/etc/rancher/rke2/rke2.yaml' >> .bashrc
 
 cat /var/lib/rancher/rke2/server/node-token
